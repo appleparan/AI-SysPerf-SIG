@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Korean study notes for the book "AI Systems Performance Engineering", run by PyTorchKR.
-The site is built with Astro 7, MDX, and Tailwind CSS v4. One session is one file:
-`src/content/sessions/NN-*.mdx`. Members live in `src/data/members.ts`.
+The site is built with Astro 7, MDX, and Tailwind CSS v4. The study schedule lives in
+`src/data/schedule.ts`. Presentation notes are MDX files in `src/content/notes/NN-*.mdx`.
+Members live in `src/data/members.ts`.
 
 ## Commands
 
@@ -15,22 +16,23 @@ bun run build
 bun run test   # build first; the ToC test reads dist/
 ```
 
-## Writing session notes
+## Writing notes
 
 - Write prose in Korean. Keep English technical terms as they are.
 - State facts first. Add context after.
+- A note belongs to a meeting by `week`. Several notes can share one week.
 - Frontmatter fields:
   - `title`: string
-  - `date`: string, `YYYY-MM-DD`
-  - `week`: number
-  - `chapters`: string, for example `Ch. 1–2`
+  - `week`: number, the meeting number in `src/data/schedule.ts`
   - `presenters`: array of GitHub ids, default `[]`
+  - `order`: number, optional, default `0`; sorts notes within a week
+- The meeting date and chapters come from `src/data/schedule.ts`. To change the plan, edit that file only.
 - Use `##` and `###` headings. The table of contents shows only these two levels.
 
 ## Adding a member
 
 Add an entry to `src/data/members.ts` with `name` and `github`.
-Presented weeks are derived from each session's `presenters` field. Do not list them by hand.
+Presented weeks are derived from each note's `presenters` field. Do not list them by hand.
 
 ## MDX gotchas
 

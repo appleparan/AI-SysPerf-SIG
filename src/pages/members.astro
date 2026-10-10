@@ -3,17 +3,20 @@ import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { members } from '../data/members';
 import { presentedWeeks } from '../lib/members';
+import { sortNotes } from '../lib/notes';
 
-const sessions = (await getCollection('sessions')).map((s) => ({
+const notes = sortNotes(await getCollection('notes')).map((s) => ({
   week: s.data.week,
   presenters: s.data.presenters,
-  url: `/sessions/${s.id}`,
+  url: `/notes/${s.id}`,
 }));
 const rows = members.map((m) => ({
   ...m,
-  weeks: presentedWeeks(m.github, sessions).map((week) => ({
+  weeks: presentedWeeks(m.github, notes).map((week) => ({
     week,
-    url: sessions.find((s) => s.week === week)!.url,
+    url: notes.find(
+      (n) => n.week === week && n.presenters.some((p) => p.toLowerCase() === m.github.toLowerCase()),
+    )!.url,
   })),
 }));
 ---
@@ -41,7 +44,7 @@ const rows = members.map((m) => ({
           {m.weeks.length > 0 && (
             <span class="member-weeks">
               {m.weeks.map((w) => (
-                <a class="member-week" href={w.url}>Week {w.week}</a>
+                <a class="member-week" href={w.url}>{w.week}회</a>
               ))}
             </span>
           )}

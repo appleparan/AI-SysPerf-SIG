@@ -13,17 +13,17 @@ function readBuildOutput(pagePath: string): string {
 }
 
 describe("Table of Contents", () => {
-  let sessionHtml: string;
+  let noteHtml: string;
   let indexHtml: string;
 
   beforeAll(() => {
-    sessionHtml = readBuildOutput("sessions/01-orientation");
+    noteHtml = readBuildOutput("notes/01-ai-system-overview");
     indexHtml = readBuildOutput("");
   });
 
-  it("renders ToC sidebar on session pages", () => {
-    expect(sessionHtml).toContain('class="toc-sidebar"');
-    expect(sessionHtml).toContain('class="toc-list"');
+  it("renders ToC sidebar on note pages", () => {
+    expect(noteHtml).toContain('class="toc-sidebar"');
+    expect(noteHtml).toContain('class="toc-list"');
   });
 
   it("does not render ToC on index page", () => {
@@ -31,45 +31,45 @@ describe("Table of Contents", () => {
     expect(indexHtml).not.toContain("lecture-grid");
   });
 
-  it("renders lecture-grid wrapper on session pages", () => {
-    expect(sessionHtml).toContain('class="lecture-grid"');
+  it("renders lecture-grid wrapper on note pages", () => {
+    expect(noteHtml).toContain('class="lecture-grid"');
   });
 
-  it("contains h2 ToC items for session headings", () => {
-    const h2Items = sessionHtml.match(/toc-item toc-h2/g);
+  it("contains h2 ToC items for note headings", () => {
+    const h2Items = noteHtml.match(/toc-item toc-h2/g);
     expect(h2Items).not.toBeNull();
     expect(h2Items!.length).toBeGreaterThan(0);
   });
 
   it("contains h3 ToC items for subsections", () => {
-    const h3Items = sessionHtml.match(/toc-item toc-h3/g);
+    const h3Items = noteHtml.match(/toc-item toc-h3/g);
     expect(h3Items).not.toBeNull();
     expect(h3Items!.length).toBeGreaterThan(0);
   });
 
   it("ToC links point to heading IDs with # prefix", () => {
     const tocLinkPattern = /class="toc-item toc-h\d">\s*<a href="#[^"]+"/g;
-    const matches = sessionHtml.match(tocLinkPattern);
+    const matches = noteHtml.match(tocLinkPattern);
     expect(matches).not.toBeNull();
     expect(matches!.length).toBeGreaterThan(0);
   });
 
   it("has accessible ToC title with aria-labelledby", () => {
-    expect(sessionHtml).toContain('id="toc-heading"');
-    expect(sessionHtml).toContain('aria-labelledby="toc-heading"');
+    expect(noteHtml).toContain('id="toc-heading"');
+    expect(noteHtml).toContain('aria-labelledby="toc-heading"');
   });
 
   it("heading elements have id attributes for ToC anchoring", () => {
-    const headingWithId = sessionHtml.match(/<h2 id="[^"]+"/g);
+    const headingWithId = noteHtml.match(/<h2 id="[^"]+"/g);
     expect(headingWithId).not.toBeNull();
     expect(headingWithId!.length).toBeGreaterThan(0);
   });
 });
 
-describe("ToC across all session pages", () => {
-  const sessionPages = ["sessions/01-orientation"];
+describe("ToC across all note pages", () => {
+  const notePages = ["notes/01-ai-system-overview", "notes/01-orientation"];
 
-  it.each(sessionPages)("%s has ToC sidebar", (page) => {
+  it.each(notePages)("%s has ToC sidebar", (page) => {
     const html = readBuildOutput(page);
     expect(html).toContain('class="toc-sidebar"');
     expect(html).toContain('class="lecture-grid"');
@@ -77,26 +77,26 @@ describe("ToC across all session pages", () => {
 });
 
 describe("Mobile ToC", () => {
-  let sessionHtml: string;
+  let noteHtml: string;
   let indexHtml: string;
 
   beforeAll(() => {
-    sessionHtml = readBuildOutput("sessions/01-orientation");
+    noteHtml = readBuildOutput("notes/01-ai-system-overview");
     indexHtml = readBuildOutput("");
   });
 
   it("renders a toc-toggle button with correct aria attributes", () => {
-    expect(sessionHtml).toContain('class="toc-toggle"');
-    expect(sessionHtml).toContain('aria-expanded="false"');
-    expect(sessionHtml).toContain('aria-controls="toc-sidebar"');
+    expect(noteHtml).toContain('class="toc-toggle"');
+    expect(noteHtml).toContain('aria-expanded="false"');
+    expect(noteHtml).toContain('aria-controls="toc-sidebar"');
   });
 
   it("renders a toc-backdrop element", () => {
-    expect(sessionHtml).toContain('class="toc-backdrop"');
+    expect(noteHtml).toContain('class="toc-backdrop"');
   });
 
   it("gives the ToC nav an id of toc-sidebar", () => {
-    expect(sessionHtml).toContain('id="toc-sidebar"');
+    expect(noteHtml).toContain('id="toc-sidebar"');
   });
 
   it("does not render mobile ToC markup on the index page", () => {

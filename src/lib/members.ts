@@ -3,10 +3,10 @@ import type { Member } from '../data/members';
 /** Return the sorted, unique weeks in which `github` is a presenter (case-insensitive). */
 export function presentedWeeks(
   github: string,
-  sessions: ReadonlyArray<{ week: number; presenters: readonly string[] }>,
+  notes: ReadonlyArray<{ week: number; presenters: readonly string[] }>,
 ): number[] {
   const id = github.toLowerCase();
-  const weeks = sessions
+  const weeks = notes
     .filter((s) => s.presenters.some((p) => p.toLowerCase() === id))
     .map((s) => s.week);
   return [...new Set(weeks)].sort((a, b) => a - b);

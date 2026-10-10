@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { memberName, presentedWeeks } from '../src/lib/members';
 
-const sessions = [
+const notes = [
   { week: 3, presenters: ['AppleParan'] },
   { week: 1, presenters: ['appleparan', 'other'] },
   { week: 2, presenters: ['other'] },
@@ -9,15 +9,15 @@ const sessions = [
 
 describe('presentedWeeks', () => {
   it('returns weeks sorted ascending', () => {
-    expect(presentedWeeks('other', sessions)).toEqual([1, 2]);
+    expect(presentedWeeks('other', notes)).toEqual([1, 2]);
   });
 
   it('matches ids case-insensitively', () => {
-    expect(presentedWeeks('appleparan', sessions)).toEqual([1, 3]);
+    expect(presentedWeeks('appleparan', notes)).toEqual([1, 3]);
   });
 
   it('returns an empty array when the member never presented', () => {
-    expect(presentedWeeks('nobody', sessions)).toEqual([]);
+    expect(presentedWeeks('nobody', notes)).toEqual([]);
   });
 });
 

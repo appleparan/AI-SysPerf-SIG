@@ -16,8 +16,8 @@ interface Props {
   date?: string;
   chapters?: string;
   presenters?: string[];
-  prevSession?: { title: string; url: string } | null;
-  nextSession?: { title: string; url: string } | null;
+  prevNote?: { title: string; url: string } | null;
+  nextNote?: { title: string; url: string } | null;
   headings?: Heading[];
 }
 
@@ -27,11 +27,11 @@ const {
   date,
   chapters,
   presenters = [],
-  prevSession,
-  nextSession,
+  prevNote,
+  nextNote,
   headings = [],
 } = Astro.props;
-const metaLine = [`Week ${week}`, date, chapters].filter(Boolean).join(' · ');
+const metaLine = [`${week}회`, date, chapters].filter(Boolean).join(' · ');
 const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
 const hasToc = tocHeadings.length > 0;
 ---
@@ -63,20 +63,20 @@ const hasToc = tocHeadings.length > 0;
           <slot />
         </div>
 
-        {(prevSession || nextSession) && (
-          <nav class="prev-next-nav" aria-label="Session navigation">
-            {prevSession ? (
-              <a href={prevSession.url} class="prev-next-link prev">
+        {(prevNote || nextNote) && (
+          <nav class="prev-next-nav" aria-label="Note navigation">
+            {prevNote ? (
+              <a href={prevNote.url} class="prev-next-link prev">
                 <span class="prev-next-label">&larr; Previous</span>
-                <span class="prev-next-title">{prevSession.title}</span>
+                <span class="prev-next-title">{prevNote.title}</span>
               </a>
             ) : (
               <div />
             )}
-            {nextSession ? (
-              <a href={nextSession.url} class="prev-next-link next">
+            {nextNote ? (
+              <a href={nextNote.url} class="prev-next-link next">
                 <span class="prev-next-label">Next &rarr;</span>
-                <span class="prev-next-title">{nextSession.title}</span>
+                <span class="prev-next-title">{nextNote.title}</span>
               </a>
             ) : (
               <div />
