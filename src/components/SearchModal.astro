@@ -1,13 +1,15 @@
 ---
 import { getCollection } from 'astro:content';
+import { meetings } from '../data/schedule';
+import { meetingForWeek } from '../lib/schedule';
+import { sortNotes } from '../lib/notes';
 
-const sessions = await getCollection('sessions');
-const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
+const sorted = sortNotes(await getCollection('notes'));
 const searchData = sorted.map((s) => ({
   title: s.data.title,
   week: s.data.week,
-  date: s.data.date,
-  url: `/sessions/${s.id}`,
+  date: meetingForWeek(s.data.week, meetings)?.date ?? '',
+  url: `/notes/${s.id}`,
 }));
 ---
 
@@ -63,7 +65,7 @@ const searchData = sorted.map((s) => ({
     var matches = data.filter(function (item) {
       return (
         item.title.toLowerCase().indexOf(q) !== -1 ||
-        ('week ' + item.week).indexOf(q) !== -1
+        (item.week + '회').indexOf(q) !== -1
       );
     });
 
@@ -77,7 +79,7 @@ const searchData = sorted.map((s) => ({
         return (
           '<a href="' + item.url + '" class="search-result-item">' +
           '<div class="search-result-title">' + escapeHtml(item.title) + '</div>' +
-          '<div class="search-result-meta">Week ' + item.week + ' · ' + escapeHtml(item.date) + '</div>' +
+          '<div class="search-result-meta">' + item.week + '회 · ' + escapeHtml(item.date) + '</div>' +
           '</a>'
         );
       })

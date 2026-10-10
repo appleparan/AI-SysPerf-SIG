@@ -1,0 +1,46 @@
+---
+import { getCollection, render } from 'astro:content';
+import NoteLayout from '../../layouts/NoteLayout.astro';
+import { meetings } from '../../data/schedule';
+import { meetingForWeek } from '../../lib/schedule';
+import { sortNotes } from '../../lib/notes';
+
+export async function getStaticPaths() {
+  const sorted = sortNotes(await getCollection('notes'));
+
+  return sorted.map((entry, index) => {
+    const meeting = meetingForWeek(entry.data.week, meetings);
+    if (!meeting) {
+      throw new Error(`Note "${entry.id}" has week ${entry.data.week}, but the schedule has no such meeting.`);
+    }
+    const prev = index > 0 ? sorted[index - 1] : null;
+    const next = index < sorted.length - 1 ? sorted[index + 1] : null;
+
+    return {
+      params: { slug: entry.id },
+      props: {
+        entry,
+        meeting,
+        prevNote: prev ? { title: prev.data.title, url: `/notes/${prev.id}` } : null,
+        nextNote: next ? { title: next.data.title, url: `/notes/${next.id}` } : null,
+      },
+    };
+  });
+}
+
+const { entry, meeting, prevNote, nextNote } = Astro.props;
+const { Content, headings } = await render(entry);
+---
+
+<NoteLayout
+  title={entry.data.title}
+  week={entry.data.week}
+  date={meeting.date}
+  chapters={meeting.chapters}
+  presenters={entry.data.presenters}
+  prevNote={prevNote}
+  nextNote={nextNote}
+  headings={headings}
+>
+  <Content />
+</NoteLayout>

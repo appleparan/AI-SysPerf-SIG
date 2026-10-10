@@ -2,9 +2,29 @@
 import { getCollection } from 'astro:content';
 import BaseLayout from '../layouts/BaseLayout.astro';
 import { siteConfig } from '../config';
+import { breaks, meetings, seasons } from '../data/schedule';
+import { members } from '../data/members';
+import { memberName } from '../lib/members';
+import { timeline } from '../lib/schedule';
+import type { TimelineEntry } from '../lib/schedule';
+import { sortNotes } from '../lib/notes';
 
-const sessions = await getCollection('sessions');
-const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
+const notes = sortNotes(await getCollection('notes'));
+const notesForWeek = (week: number) => notes.filter((n) => n.data.week === week);
+
+// A break belongs to the season of the next meeting; breaks after the last meeting go to the last season.
+const entries = timeline(meetings, breaks);
+const seasonOf = (index: number): number => {
+  for (let i = index; i < entries.length; i++) {
+    const e = entries[i];
+    if (e.kind === 'meeting') return e.meeting.season;
+  }
+  return seasons[seasons.length - 1].id;
+};
+const groups = seasons.map((season) => ({
+  season,
+  rows: entries.filter((_, i) => seasonOf(i) === season.id) as TimelineEntry[],
+}));
 ---
 
 <BaseLayout currentPath="/">
@@ -14,15 +34,42 @@ const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
       <p class="index-subtitle">{siteConfig.subtitle}</p>
     </div>
 
-    <div class="lecture-list">
-      {sorted.map((session) => (
-        <a href={`/sessions/${session.id}`} class="lecture-item">
-          <span class="lecture-item-week">Week {session.data.week}</span>
-          <span class="lecture-item-title">{session.data.title}</span>
-          <span class="lecture-item-date">{session.data.date}</span>
-        </a>
-      ))}
-    </div>
+    {groups.map(({ season, rows }) => (
+      <section class="season">
+        <h2 class="season-title">시즌 {season.id} · {season.title}</h2>
+        <div class="lecture-list">
+          {rows.map((row) =>
+            row.kind === 'meeting' ? (
+              <div class="lecture-item meeting-item">
+                <span class="lecture-item-week">{row.meeting.week}회</span>
+                <div class="meeting-main">
+                  <span class="lecture-item-title">{row.meeting.chapters} · {row.meeting.title}</span>
+                  {notesForWeek(row.meeting.week).length > 0 && (
+                    <ul class="note-list">
+                      {notesForWeek(row.meeting.week).map((n) => (
+                        <li>
+                          <a href={`/notes/${n.id}`}>{n.data.title}</a>
+                          {n.data.presenters.length > 0 && (
+                            <span class="note-presenters"> · 발표: {n.data.presenters.map((p) => memberName(p, members)).join(', ')}</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <span class="lecture-item-date">{row.meeting.date}</span>
+              </div>
+            ) : (
+              <div class="lecture-item break-item">
+                <span class="lecture-item-week">휴식</span>
+                <span class="lecture-item-title">{row.break.label}</span>
+                <span class="lecture-item-date">{row.break.date}</span>
+              </div>
+            ),
+          )}
+        </div>
+      </section>
+    ))}
 
     <p class="index-note">
       이 사이트는 PyTorchKR AI Systems Performance Engineering 북 스터디의 발표 내용을 모아 둔 곳입니다.
