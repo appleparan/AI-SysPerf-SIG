@@ -1,0 +1,13 @@
+node_modules
+.DS_Store
+dist
+*.local
+.astro
+.claude
+
+lecture_files
+scripts/*.json
+conversion-report.md
+
+# Generated at build time
+src/generated/

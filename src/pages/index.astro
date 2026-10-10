@@ -1,0 +1,32 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config';
+
+const lectures = await getCollection('lectures');
+const sorted = lectures.sort((a, b) => a.data.lecture - b.data.lecture);
+---
+
+<BaseLayout currentPath="/">
+  <div class="content-container">
+    <div class="index-header">
+      <h1 class="index-title">{siteConfig.title}</h1>
+      <p class="index-subtitle">{siteConfig.subtitle}</p>
+    </div>
+
+    <div class="lecture-list">
+      {sorted.map((lecture) => (
+        <a href={`/lectures/${lecture.id}`} class="lecture-item">
+          <span class="lecture-item-week">Week {lecture.data.lecture}</span>
+          <span class="lecture-item-title">{lecture.data.title}</span>
+          <span class="lecture-item-date">{lecture.data.date}</span>
+        </a>
+      ))}
+    </div>
+
+    <p class="index-note">
+      이 강의는 모두의 연구소 PyTorch + NPU랩에서 진행한 PyTorch Internal 강의입니다.
+      v2.0.0에서 Claude와 Codex를 사용해 PyTorch 2.14 기준으로 내용을 검증·업데이트하고 일부 내용을 추가했습니다.
+    </p>
+  </div>
+</BaseLayout>

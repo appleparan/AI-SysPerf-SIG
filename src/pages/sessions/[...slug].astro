@@ -1,0 +1,41 @@
+---
+import { getCollection, render } from 'astro:content';
+import LectureLayout from '../../layouts/LectureLayout.astro';
+
+export async function getStaticPaths() {
+  const lectures = await getCollection('lectures');
+  const sorted = lectures.sort((a, b) => a.data.lecture - b.data.lecture);
+
+  return sorted.map((entry, index) => {
+    const prev = index > 0 ? sorted[index - 1] : null;
+    const next = index < sorted.length - 1 ? sorted[index + 1] : null;
+
+    return {
+      params: { slug: entry.id },
+      props: {
+        entry,
+        prevLecture: prev
+          ? { title: prev.data.title, url: `/lectures/${prev.id}` }
+          : null,
+        nextLecture: next
+          ? { title: next.data.title, url: `/lectures/${next.id}` }
+          : null,
+      },
+    };
+  });
+}
+
+const { entry, prevLecture, nextLecture } = Astro.props;
+const { Content, headings } = await render(entry);
+---
+
+<LectureLayout
+  title={entry.data.title}
+  lecture={entry.data.lecture}
+  date={entry.data.date}
+  prevLecture={prevLecture}
+  nextLecture={nextLecture}
+  headings={headings}
+>
+  <Content />
+</LectureLayout>
