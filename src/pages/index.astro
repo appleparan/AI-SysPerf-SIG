@@ -1,0 +1,31 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config';
+
+const sessions = await getCollection('sessions');
+const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
+---
+
+<BaseLayout currentPath="/">
+  <div class="content-container">
+    <div class="index-header">
+      <h1 class="index-title">{siteConfig.title}</h1>
+      <p class="index-subtitle">{siteConfig.subtitle}</p>
+    </div>
+
+    <div class="lecture-list">
+      {sorted.map((session) => (
+        <a href={`/sessions/${session.id}`} class="lecture-item">
+          <span class="lecture-item-week">Week {session.data.week}</span>
+          <span class="lecture-item-title">{session.data.title}</span>
+          <span class="lecture-item-date">{session.data.date}</span>
+        </a>
+      ))}
+    </div>
+
+    <p class="index-note">
+      이 사이트는 PyTorchKR AI Systems Performance Engineering 북 스터디의 발표 내용을 모아 둔 곳입니다.
+    </p>
+  </div>
+</BaseLayout>

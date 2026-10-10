@@ -1,0 +1,43 @@
+---
+import { getCollection, render } from 'astro:content';
+import SessionLayout from '../../layouts/SessionLayout.astro';
+
+export async function getStaticPaths() {
+  const sessions = await getCollection('sessions');
+  const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
+
+  return sorted.map((entry, index) => {
+    const prev = index > 0 ? sorted[index - 1] : null;
+    const next = index < sorted.length - 1 ? sorted[index + 1] : null;
+
+    return {
+      params: { slug: entry.id },
+      props: {
+        entry,
+        prevSession: prev
+          ? { title: prev.data.title, url: `/sessions/${prev.id}` }
+          : null,
+        nextSession: next
+          ? { title: next.data.title, url: `/sessions/${next.id}` }
+          : null,
+      },
+    };
+  });
+}
+
+const { entry, prevSession, nextSession } = Astro.props;
+const { Content, headings } = await render(entry);
+---
+
+<SessionLayout
+  title={entry.data.title}
+  week={entry.data.week}
+  date={entry.data.date}
+  chapters={entry.data.chapters}
+  presenters={entry.data.presenters}
+  prevSession={prevSession}
+  nextSession={nextSession}
+  headings={headings}
+>
+  <Content />
+</SessionLayout>

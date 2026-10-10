@@ -1,0 +1,35 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="About" currentPath="/about">
+  <div class="content-container">
+    <div class="index-header">
+      <h1 class="index-title">About</h1>
+      <p class="index-subtitle">이 스터디에 대해</p>
+    </div>
+
+    <div class="about-body">
+      <p>
+        이 사이트는 PyTorchKR이 진행하는 "AI Systems Performance Engineering"(O'Reilly) 북 스터디의 발표 내용을 모아 둔 곳입니다.
+      </p>
+
+      <dl class="about-credits">
+        <div class="about-credit">
+          <dt>운영</dt>
+          <dd>
+            <a href="https://pytorch.kr" target="_blank" rel="noopener noreferrer">PyTorchKR</a>
+          </dd>
+        </div>
+        <div class="about-credit">
+          <dt>교재</dt>
+          <dd>AI Systems Performance Engineering</dd>
+        </div>
+        <div class="about-credit">
+          <dt>참여자</dt>
+          <dd><a href="/members">Members</a></dd>
+        </div>
+      </dl>
+    </div>
+  </div>
+</BaseLayout>

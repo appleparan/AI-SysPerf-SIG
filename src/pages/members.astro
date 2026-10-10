@@ -1,0 +1,52 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import { members } from '../data/members';
+import { presentedWeeks } from '../lib/members';
+
+const sessions = (await getCollection('sessions')).map((s) => ({
+  week: s.data.week,
+  presenters: s.data.presenters,
+  url: `/sessions/${s.id}`,
+}));
+const rows = members.map((m) => ({
+  ...m,
+  weeks: presentedWeeks(m.github, sessions).map((week) => ({
+    week,
+    url: sessions.find((s) => s.week === week)!.url,
+  })),
+}));
+---
+
+<BaseLayout title="Members" currentPath="/members">
+  <div class="content-container">
+    <div class="index-header">
+      <h1 class="index-title">Members</h1>
+      <p class="index-subtitle">스터디 참여자</p>
+    </div>
+
+    <ul class="member-list">
+      {rows.map((m) => (
+        <li class="member-item">
+          <img
+            class="member-avatar"
+            src={`https://github.com/${m.github}.png?size=96`}
+            alt=""
+            width="40"
+            height="40"
+            loading="lazy"
+          />
+          <span class="member-name">{m.name}</span>
+          <a class="member-handle" href={`https://github.com/${m.github}`} target="_blank" rel="noopener noreferrer">@{m.github}</a>
+          {m.weeks.length > 0 && (
+            <span class="member-weeks">
+              {m.weeks.map((w) => (
+                <a class="member-week" href={w.url}>Week {w.week}</a>
+              ))}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  </div>
+</BaseLayout>
