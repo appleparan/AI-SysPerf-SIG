@@ -9,6 +9,6 @@ export const siteConfig = {
     { label: 'About', href: '/about' },
   ],
   social: {
-    github: 'https://github.com/PyTorchKR/AI-SysPerf-SIG',
+    github: 'https://github.com/appleparan/AI-SysPerf-SIG',
   },
 } as const;

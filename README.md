@@ -2,7 +2,7 @@
 
 PyTorchKR "AI Systems Performance Engineering" 북 스터디의 발표 노트를 모은 사이트입니다.
 
-- 사이트: https://pytorchkr.github.io/AI-SysPerf-SIG/ (예정)
+- 사이트: <https://ai-sysperf-sig.liam.kim/>
 
 ## Sessions
 
