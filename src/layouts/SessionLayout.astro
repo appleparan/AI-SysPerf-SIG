@@ -1,0 +1,89 @@
+---
+import BaseLayout from './BaseLayout.astro';
+import TableOfContents from '../components/TableOfContents.astro';
+import { members } from '../data/members';
+import { memberName } from '../lib/members';
+
+interface Heading {
+  depth: number;
+  slug: string;
+  text: string;
+}
+
+interface Props {
+  title: string;
+  week: number;
+  date?: string;
+  chapters?: string;
+  presenters?: string[];
+  prevSession?: { title: string; url: string } | null;
+  nextSession?: { title: string; url: string } | null;
+  headings?: Heading[];
+}
+
+const {
+  title,
+  week,
+  date,
+  chapters,
+  presenters = [],
+  prevSession,
+  nextSession,
+  headings = [],
+} = Astro.props;
+const metaLine = [`Week ${week}`, date, chapters].filter(Boolean).join(' · ');
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
+const hasToc = tocHeadings.length > 0;
+---
+
+<BaseLayout title={title} currentPath="/">
+  <div class:list={[hasToc && 'lecture-grid']}>
+    {hasToc && <TableOfContents headings={headings} />}
+    <div class="content-container">
+      <article>
+        <div class="article-header">
+          <span class="article-meta">{metaLine}</span>
+          <h1 class="article-title">{title}</h1>
+          {presenters.length > 0 && (
+            <p class="article-presenters">
+              발표:{' '}
+              {presenters.map((id, i) => (
+                <>
+                  {i > 0 && ', '}
+                  <a href={`https://github.com/${id}`} target="_blank" rel="noopener noreferrer">
+                    {memberName(id, members)}
+                  </a>
+                </>
+              ))}
+            </p>
+          )}
+        </div>
+
+        <div class="article-body">
+          <slot />
+        </div>
+
+        {(prevSession || nextSession) && (
+          <nav class="prev-next-nav" aria-label="Session navigation">
+            {prevSession ? (
+              <a href={prevSession.url} class="prev-next-link prev">
+                <span class="prev-next-label">&larr; Previous</span>
+                <span class="prev-next-title">{prevSession.title}</span>
+              </a>
+            ) : (
+              <div />
+            )}
+            {nextSession ? (
+              <a href={nextSession.url} class="prev-next-link next">
+                <span class="prev-next-label">Next &rarr;</span>
+                <span class="prev-next-title">{nextSession.title}</span>
+              </a>
+            ) : (
+              <div />
+            )}
+          </nav>
+        )}
+      </article>
+    </div>
+  </div>
+</BaseLayout>

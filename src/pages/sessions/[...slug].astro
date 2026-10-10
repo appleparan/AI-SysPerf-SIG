@@ -1,10 +1,10 @@
 ---
 import { getCollection, render } from 'astro:content';
-import LectureLayout from '../../layouts/LectureLayout.astro';
+import SessionLayout from '../../layouts/SessionLayout.astro';
 
 export async function getStaticPaths() {
-  const lectures = await getCollection('lectures');
-  const sorted = lectures.sort((a, b) => a.data.lecture - b.data.lecture);
+  const sessions = await getCollection('sessions');
+  const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
 
   return sorted.map((entry, index) => {
     const prev = index > 0 ? sorted[index - 1] : null;
@@ -14,28 +14,30 @@ export async function getStaticPaths() {
       params: { slug: entry.id },
       props: {
         entry,
-        prevLecture: prev
-          ? { title: prev.data.title, url: `/lectures/${prev.id}` }
+        prevSession: prev
+          ? { title: prev.data.title, url: `/sessions/${prev.id}` }
           : null,
-        nextLecture: next
-          ? { title: next.data.title, url: `/lectures/${next.id}` }
+        nextSession: next
+          ? { title: next.data.title, url: `/sessions/${next.id}` }
           : null,
       },
     };
   });
 }
 
-const { entry, prevLecture, nextLecture } = Astro.props;
+const { entry, prevSession, nextSession } = Astro.props;
 const { Content, headings } = await render(entry);
 ---
 
-<LectureLayout
+<SessionLayout
   title={entry.data.title}
-  lecture={entry.data.lecture}
+  week={entry.data.week}
   date={entry.data.date}
-  prevLecture={prevLecture}
-  nextLecture={nextLecture}
+  chapters={entry.data.chapters}
+  presenters={entry.data.presenters}
+  prevSession={prevSession}
+  nextSession={nextSession}
   headings={headings}
 >
   <Content />
-</LectureLayout>
+</SessionLayout>

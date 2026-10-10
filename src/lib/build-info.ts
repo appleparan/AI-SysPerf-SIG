@@ -26,7 +26,7 @@ export function formatVersion(describe: string): string {
   return match ? `${match[1]}+${match[2]}` : describe;
 }
 
-/** Build date as YYYY-MM-DD in Korea time, where the lectures are maintained. */
+/** Build date as YYYY-MM-DD in Korea time, where the sessions are maintained. */
 export function formatBuildDate(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Seoul',

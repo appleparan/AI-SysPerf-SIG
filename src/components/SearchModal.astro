@@ -1,13 +1,13 @@
 ---
 import { getCollection } from 'astro:content';
 
-const lectures = await getCollection('lectures');
-const sorted = lectures.sort((a, b) => a.data.lecture - b.data.lecture);
-const searchData = sorted.map((l) => ({
-  title: l.data.title,
-  week: l.data.lecture,
-  date: l.data.date,
-  url: `/lectures/${l.id}`,
+const sessions = await getCollection('sessions');
+const sorted = sessions.sort((a, b) => a.data.week - b.data.week);
+const searchData = sorted.map((s) => ({
+  title: s.data.title,
+  week: s.data.week,
+  date: s.data.date,
+  url: `/sessions/${s.id}`,
 }));
 ---
 
@@ -22,7 +22,7 @@ const searchData = sorted.map((l) => ({
         type="text"
         class="search-input"
         id="search-input"
-        placeholder="강의 검색..."
+        placeholder="회차 검색..."
         autocomplete="off"
       />
     </div>
