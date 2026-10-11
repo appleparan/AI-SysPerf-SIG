@@ -24,6 +24,12 @@ describe('schedule data', () => {
     expect(meetings.filter((m) => breakDates.has(m.date))).toEqual([]);
   });
 
+  it('assigns a presenter to every meeting from week 3 on', () => {
+    const assigned = meetings.filter((m) => m.week >= 3);
+    expect(assigned).toHaveLength(19);
+    for (const m of assigned) expect(m.presenter, `week ${m.week}`).toBeTruthy();
+  });
+
   it('refers only to known seasons', () => {
     const ids = new Set(seasons.map((s) => s.id));
     expect(meetings.every((m) => ids.has(m.season))).toBe(true);

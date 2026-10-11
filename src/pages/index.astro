@@ -44,6 +44,9 @@ const groups = seasons.map((season) => ({
                 <span class="lecture-item-week">{row.meeting.week}회</span>
                 <div class="meeting-main">
                   <span class="lecture-item-title">{row.meeting.chapters} · {row.meeting.title}</span>
+                  {row.meeting.presenter && (
+                    <span class="meeting-presenter">발표: {row.meeting.presenter}</span>
+                  )}
                   {notesForWeek(row.meeting.week).length > 0 && (
                     <ul class="note-list">
                       {notesForWeek(row.meeting.week).map((n) => (
