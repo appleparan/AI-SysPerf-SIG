@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 310" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>GB200: Blackwell GPU 2개와 Grace CPU 1개의 메모리와 연결</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#B4B2A9"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#B4B2A9"/></marker></defs>
+<rect x="20" y="20" width="600" height="280" rx="6" fill="#444441" stroke="#6F6E68" stroke-width="1.2"/>
+<text x="36" y="44" text-anchor="start" font-size="13" font-weight="700" fill="#D3D1C7">GB200 Grace Blackwell Superchip</text>
+<rect x="50" y="62" width="220" height="80" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="160" y="94" text-anchor="middle" font-size="14" font-weight="700" fill="#85B7EB">Blackwell GPU 0</text>
+<text x="160" y="118" text-anchor="middle" font-size="13" fill="#B4B2A9">HBM3e 186 GB</text>
+<rect x="370" y="62" width="220" height="80" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="480" y="94" text-anchor="middle" font-size="14" font-weight="700" fill="#85B7EB">Blackwell GPU 1</text>
+<text x="480" y="118" text-anchor="middle" font-size="13" fill="#B4B2A9">HBM3e 186 GB</text>
+<line x1="272" y1="102" x2="368" y2="102" stroke="#B4B2A9" stroke-width="2" marker-end="url(#ah)" marker-start="url(#ahs)"/>
+<text x="320" y="92" text-anchor="middle" font-size="12" fill="#B4B2A9">NVLink</text>
+<rect x="210" y="196" width="220" height="80" rx="6" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1.2"/>
+<text x="320" y="228" text-anchor="middle" font-size="14" font-weight="700" fill="#6FCF97">Grace CPU</text>
+<text x="320" y="252" text-anchor="middle" font-size="13" fill="#B4B2A9">LPDDR5X 480 GB</text>
+<path d="M160 144 V170 H268 V194" fill="none" stroke="#B4B2A9" stroke-width="2" marker-start="url(#ahs)" marker-end="url(#ah)"/>
+<path d="M480 144 V170 H372 V194" fill="none" stroke="#B4B2A9" stroke-width="2" marker-start="url(#ahs)" marker-end="url(#ah)"/>
+<text x="320" y="174" text-anchor="middle" font-size="12" fill="#B4B2A9">NVLink-C2C</text>
+<text x="320" y="292" text-anchor="middle" font-size="11" fill="#888780">CPU ↔ GPU: NVLink-C2C (양방향, Coherence)  ·  GPU ↔ GPU: NVLink</text>
+</svg>

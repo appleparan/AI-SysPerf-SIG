@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 150" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>읽기, 질문, 토론, 정리의 4단계 진행 순서</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#B4B2A9"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#B4B2A9"/></marker></defs>
+<rect x="20" y="30" width="150" height="96" rx="6" fill="#444441" stroke="#888780" stroke-width="1.2"/>
+<text x="34" y="52" text-anchor="start" font-size="12" fill="#888780">01</text>
+<text x="60" y="52" text-anchor="start" font-size="14" font-weight="700" fill="#D3D1C7">READ</text>
+<text x="95" y="82" text-anchor="middle" font-size="12" fill="#B4B2A9">모두 사전에</text>
+<text x="95" y="102" text-anchor="middle" font-size="12" fill="#B4B2A9">교재 읽기</text>
+<line x1="172" y1="78" x2="198" y2="78" stroke="#B4B2A9" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="200" y="30" width="150" height="96" rx="6" fill="#444441" stroke="#888780" stroke-width="1.2"/>
+<text x="214" y="52" text-anchor="start" font-size="12" fill="#888780">02</text>
+<text x="240" y="52" text-anchor="start" font-size="14" font-weight="700" fill="#D3D1C7">QUESTION</text>
+<text x="275" y="82" text-anchor="middle" font-size="12" fill="#B4B2A9">이해되지 않는 부분</text>
+<text x="275" y="102" text-anchor="middle" font-size="12" fill="#B4B2A9">질문으로 준비</text>
+<line x1="352" y1="78" x2="378" y2="78" stroke="#B4B2A9" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="380" y="30" width="150" height="96" rx="6" fill="#444441" stroke="#888780" stroke-width="1.2"/>
+<text x="394" y="52" text-anchor="start" font-size="12" fill="#888780">03</text>
+<text x="420" y="52" text-anchor="start" font-size="14" font-weight="700" fill="#D3D1C7">DISCUSS</text>
+<text x="455" y="82" text-anchor="middle" font-size="12" fill="#B4B2A9">함께 설명하고</text>
+<text x="455" y="102" text-anchor="middle" font-size="12" fill="#B4B2A9">기술적 근거 확인</text>
+<line x1="532" y1="78" x2="558" y2="78" stroke="#B4B2A9" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="560" y="30" width="150" height="96" rx="6" fill="#444441" stroke="#888780" stroke-width="1.2"/>
+<text x="574" y="52" text-anchor="start" font-size="12" fill="#888780">04</text>
+<text x="600" y="52" text-anchor="start" font-size="14" font-weight="700" fill="#D3D1C7">REVIEW</text>
+<text x="635" y="82" text-anchor="middle" font-size="12" fill="#B4B2A9">이해한 내용과</text>
+<text x="635" y="102" text-anchor="middle" font-size="12" fill="#B4B2A9">남은 질문 정리</text>
+</svg>

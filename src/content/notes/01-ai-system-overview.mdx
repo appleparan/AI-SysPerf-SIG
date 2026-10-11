@@ -5,6 +5,8 @@ presenters: ["appleparan"]
 order: 1
 ---
 
+import ThemeImage from '../../components/ThemeImage.astro';
+
 # Ch. 1–2 Introduction and AI System Overview / AI System Hardware Overview
 
 사전 질문 11개를 네 주제로 묶어 토론했습니다. 질문 순서는 토론 흐름에 맞춰 재구성했고, 질문 원문은 제출된 그대로 옮겼습니다.
@@ -27,6 +29,8 @@ GPU Utilization은 Goodput과 같지 않습니다. GPU를 쓰고 있는지보다
 1. **SM Activity**: 연산 자원이 실제로 얼마나 활성화되어 있는가?
 2. **Latency Hiding**: 메모리와 연산 대기 시간을 얼마나 숨길 수 있는가?
 3. **Bottleneck**: Memory-bound인가, Compute-bound인가?
+
+<ThemeImage lightSrc="/images/notes/01/goodput-light.svg" darkSrc="/images/notes/01/goodput-dark.svg" alt="GPU Utilization ≠ Goodput. SM Activity, Latency Hiding, Bottleneck 세 관점을 나란히 둔 그림" class="mx-auto w-full max-w-[640px]" />
 
 구체적인 측정과 분석 방법은 이후 Profiling과 성능 최적화 장에서 다룹니다.
 
@@ -51,11 +55,7 @@ GPU Utilization은 Goodput과 같지 않습니다. GPU를 쓰고 있는지보다
 
 GB200은 Blackwell GPU 2개와 Grace CPU 1개로 구성됩니다. HBM과 LPDDR은 별도의 물리 메모리입니다.
 
-| 구성 요소 | 메모리 |
-| --- | --- |
-| Blackwell GPU 0 | HBM3e 186 GB |
-| Blackwell GPU 1 | HBM3e 186 GB |
-| Grace CPU | LPDDR5X 480 GB |
+<ThemeImage lightSrc="/images/notes/01/gb200-superchip-light.svg" darkSrc="/images/notes/01/gb200-superchip-dark.svg" alt="GB200 Grace Blackwell Superchip: Blackwell GPU 0과 1(각 HBM3e 186 GB)이 NVLink로, 두 GPU와 Grace CPU(LPDDR5X 480 GB)가 NVLink-C2C로 연결된 구성" class="mx-auto w-full max-w-[640px]" />
 
 GPU 사이는 NVLink로, CPU와 GPU 사이는 NVLink-C2C로 연결됩니다. C2C는 양방향이고 Coherence를 제공합니다.
 
@@ -74,7 +74,11 @@ GPU 사이는 NVLink로, CPU와 GPU 사이는 NVLink-C2C로 연결됩니다. C2C
 
 **왜 Multi-Die인가.** 다이 크기를 키우는 데에는 Reticle, Yield, Power/Thermal 제약이 있습니다. 하나의 큰 Monolithic Die에서는 결함 1개가 더 넓은 면적에 영향을 주지만, 작은 Die나 Chiplet으로 나누면 결함의 영향을 더 작은 단위로 격리할 수 있습니다.
 
+<ThemeImage lightSrc="/images/notes/01/die-yield-light.svg" darkSrc="/images/notes/01/die-yield-dark.svg" alt="같은 위치에 결함 3개가 있을 때, 큰 다이 2×2에서는 3개가 불량이 되지만 작은 다이 6×4에서는 3개만 불량이 되는 개념도" class="mx-auto w-full max-w-[640px]" />
+
 **Two Dies, One CUDA GPU.** Blackwell은 다이 사이를 NV-HBI(10 TB/s)로 연결하고 Coherence를 제공해, 일반적인 개발에서는 단일 GPU로 노출됩니다. 각 다이는 SM, L2 slice, Memory를 가지며 하드웨어와 CUDA 런타임이 통합된 프로그래밍 모델을 제공합니다.
+
+<ThemeImage lightSrc="/images/notes/01/two-dies-one-gpu-light.svg" darkSrc="/images/notes/01/two-dies-one-gpu-dark.svg" alt="GPU Die 0과 Die 1이 NV-HBI 10 TB/s로 연결되어 하나의 CUDA GPU로 노출되는 구조" class="mx-auto w-full max-w-[640px]" />
 
 | 일반적인 CUDA 코드 | 성능 분석 / 저수준 최적화 |
 | --- | --- |
@@ -110,6 +114,8 @@ Shared Memory 용량은 SM당 CC 10.0에서 228 KB, CC 12.0에서 128 KB입니�
 
 Occupancy는 상주 Block 수와 Block당 Warp 수의 곱을 SM 최대 Warp 수로 나눈 값입니다. 예를 들어 Block 4개가 상주하면 4 × 8 = 32 Warp이고, 최대 64 Warp인 SM에서 Occupancy는 50%입니다.
 
+<ThemeImage lightSrc="/images/notes/01/occupancy-light.svg" darkSrc="/images/notes/01/occupancy-dark.svg" alt="SM 안에 Block 4개가 상주하고 각 Block에 Warp 8개가 있어 상주 Warp 32개, 최대 64개 대비 Occupancy 50%인 그림" class="mx-auto w-full max-w-[680px]" />
+
 Blackwell CC 10.0 기준(최대 64 Warps/SM, 32 Blocks/SM, 64K Registers/SM, 228 KiB Shared Memory/SM)으로 세 가지 자원 제한을 계산하면 다음과 같습니다.
 
 | 제한 | 조건 | 상주 Block 수 | Occupancy |
@@ -128,10 +134,7 @@ Blackwell CC 10.0 기준(최대 64 Warps/SM, 32 Blocks/SM, 64K Registers/SM, 228
 
 SHARP는 Reduction을 GPU 종단에서만 처리하지 않고 네트워크 스위치가 분담하게 합니다. 조직에 비유하면 중간 관리자(Switch)가 데이터를 전달만 하는 대신 부분 Reduction까지 수행하는 셈입니다.
 
-| Without SHARP | With SHARP |
-| --- | --- |
-| Switch는 데이터 전달만 한다 | Switch가 부분 Reduction을 수행한다 |
-| 종단(GPU)에서 Reduction | 종단은 부분 결과를 취합한다 |
+<ThemeImage lightSrc="/images/notes/01/sharp-light.svg" darkSrc="/images/notes/01/sharp-dark.svg" alt="SHARP가 없으면 Switch는 데이터 전달만 하고 GPU 종단에서 Reduction을 수행하며, SHARP가 있으면 Switch가 부분 Reduction을 수행하고 종단은 부분 결과를 취합하는 비교 그림" class="mx-auto w-full max-w-[720px]" />
 
 워크로드별 기대 효과는 다음과 같습니다.
 
@@ -172,6 +175,8 @@ Ch. 1–2에서 PCIe는 NVLink보다 느린 경로로 다뤄집니다. 그러면
 
 > Figure 2-7. One NVLink Switch tray inside the NVL72 >> 이 도면에 대해 추가적으로 알고 계시는 점이 있다면 부연 부탁드리겠습니다.
 
+<img src="/images/notes/01/nvlink-switch-tray-figure-2-7.png" alt="Figure 2-7. NVL72 안의 NVLink Switch Tray 하나" class="mx-auto w-full max-w-[800px]" />
+
 질문의 Figure 2-7과 달리, Figure 2-9는 Compute Tray와 NVLink Switch를 연결한 랙 전체 구성을 보여줍니다. NVL72 Rack 구성은 다음과 같습니다.
 
 - 72 Blackwell GPUs
@@ -182,9 +187,11 @@ Ch. 1–2에서 PCIe는 NVLink보다 느린 경로로 다뤄집니다. 그러면
 
 <img src="/images/notes/01/gb200-nvl72-figure-2-9.png" alt="Figure 2-9. GB200 NVL72 architecture: Compute Tray 18개와 NVLink Switch Tray 9개가 랙 단위 NVLink Fabric으로 연결된 구성" class="mx-auto w-full max-w-[800px]" />
 
-Compute Tray 하나를 개념적으로 축약하면 Grace CPU 2개(각각 LPDDR 포함)와 B200 GPU 4개이고, 모든 Tray가 NVLink Switch Fabric으로 연결됩니다.
+Compute Tray 하나를 개념적으로 축약하면 Grace CPU 2개(각각 LPDDR 포함)와 B200 GPU 4개이고, 모든 Tray가 NVLink Switch Fabric으로 연결됩니다. Figure 2-9 기준으로 NVSwitch 칩 18개가 Switch Tray 9개에 들어 있습니다.
 
-이미지: Figure 2-9 원본, [cfregly/ai-performance-engineering, img/aisp_0209.png](https://raw.githubusercontent.com/cfregly/ai-performance-engineering/refs/heads/main/img/aisp_0209.png)
+<ThemeImage lightSrc="/images/notes/01/nvl72-tray-light.svg" darkSrc="/images/notes/01/nvl72-tray-dark.svg" alt="Compute Tray 하나(Grace CPU + LPDDR 2개, B200 GPU 4개)가 NVSwitch 18개로 이루어진 NVLink Switch Fabric에 연결되고, 옆에 NVL72 Rack 구성(GPU 72, Grace 36, Compute Tray 18, Switch Tray 9)을 적은 그림" class="mx-auto w-full max-w-[680px]" />
+
+이미지: Figure 2-7과 Figure 2-9 원본은 [cfregly/ai-performance-engineering](https://github.com/cfregly/ai-performance-engineering)의 `img/aisp_0207.png`, `img/aisp_0209.png` (Apache-2.0)
 
 ### Q11. 여러 NVL72 랙으로 확장할 때의 모델 분할 (Ch. 2)
 
