@@ -1,26 +1,249 @@
 ---
 title: "Ch. 1–2 Introduction and AI System Overview / AI System Hardware Overview"
 week: 1
-presenters: []
+presenters: ["appleparan"]
 order: 1
 ---
 
 # Ch. 1–2 Introduction and AI System Overview / AI System Hardware Overview
 
-발표 노트는 모임 후 정리합니다.
+사전 질문 11개를 네 주제로 묶어 토론했습니다. 질문 순서는 토론 흐름에 맞춰 재구성했고, 질문 원문은 제출된 그대로 옮겼습니다.
 
-## 사전 질문
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| Performance | Goodput, FP8/FP4 | Q1, Q8 |
+| GPU & Memory | NVLink-C2C, Multi-Die, SMEM | Q4, Q5, Q10 |
+| Rack & Network | SHARP, GB200, NVL72, Multi-Rack | Q6, Q7, Q9, Q11 |
+| Model Efficiency | MoE vs. Dense, Scaling | Q3, Q2 |
 
-사전 질문은 모임 전에 이곳에 모읍니다.
+## Performance
 
-## 토론 정리
+### Q1. GPU 사용률과 Goodput (Ch. 1)
 
-토론 내용은 모임 후 이곳에 정리합니다.
+> GPU 사용률은 높은데 실제 학습 및 추론 효율이 낮다면 goodput을 어떻게 정의하고 측정해야 낭비의 원인을 구분할 수 있을것인가? (16~18쪽)
 
-### 더 살펴볼 것
+GPU Utilization은 Goodput과 같지 않습니다. GPU를 쓰고 있는지보다 유효 처리량과 병목을 함께 파악해야 합니다. 구분해야 할 관점은 세 가지입니다.
 
-더 살펴볼 주제는 모임 후 이곳에 적습니다.
+1. **SM Activity**: 연산 자원이 실제로 얼마나 활성화되어 있는가?
+2. **Latency Hiding**: 메모리와 연산 대기 시간을 얼마나 숨길 수 있는가?
+3. **Bottleneck**: Memory-bound인가, Compute-bound인가?
+
+구체적인 측정과 분석 방법은 이후 Profiling과 성능 최적화 장에서 다룹니다.
+
+### Q8. FP8/FP4의 이론 처리량과 실제 성능 (Ch. 2)
+
+> FP8/FP4의 이론적 연산 처리량이 높아도 실제 학습, 추론 성능이 같은 비율로 개선되지 않는 경우는 언제이며 도입 효과를 어떻게 검증해야 할까?
+
+영향을 미치는 요소가 많아 일반화하기 어려운 질문입니다.
+
+- FP8 모델이라고 모든 연산을 FP8로 수행하는 것은 아닙니다.
+- 일부 연산은 다른 정밀도를 사용하거나 중간에 정밀도 변환이 필요합니다.
+- 메모리 대역폭, 커널 구현, 연산 특성에 따라서도 성능이 달라집니다.
+- 따라서 실제 워크로드에서 품질과 End-to-End 성능을 함께 확인해야 합니다.
+
+구체적인 검증 방법은 이후 Profiling / Optimization 학습에서 살펴봅니다.
+
+## GPU & Memory
+
+### Q4. NVLink-C2C와 CPU 메모리 접근 (Ch. 2)
+
+> NVLink-C2C를 통해 GPU가 CPU의 LPDDR에 있는 모델 데이터에 접근할 수 있어서, 스토리지나 네트워크 접근을 줄일 수 있다고 이해했습니다. 이 설명은 모델과 실행에 필요한 데이터가 HBM과 LPDDR의 가용 용량 안에 들어간다는 전제인가요? 두 메모리의 용량을 합쳐도 부족하다면 SSD에서 데이터를 가져오거나 여러 서버에 분산해야 할 것 같은데, 이때 Unified Memory가 자동으로 처리해 주는 범위와 별도의 로직이 필요한 범위는 어떻게 구분되나요?
+
+GB200은 Blackwell GPU 2개와 Grace CPU 1개로 구성됩니다. HBM과 LPDDR은 별도의 물리 메모리입니다.
+
+| 구성 요소 | 메모리 |
+| --- | --- |
+| Blackwell GPU 0 | HBM3e 186 GB |
+| Blackwell GPU 1 | HBM3e 186 GB |
+| Grace CPU | LPDDR5X 480 GB |
+
+GPU 사이는 NVLink로, CPU와 GPU 사이는 NVLink-C2C로 연결됩니다. C2C는 양방향이고 Coherence를 제공합니다.
+
+**메모리 배치와 효과.** 자주 접근하는 데이터는 HBM에, 덜 접근하는 데이터는 LPDDR에 둡니다. 총 852 GB 공간을 활용하면 SSD 로딩이나 분산의 필요성이 줄어들 수 있습니다.
+
+**메모리 용량을 넘어설 때.** SSD에서는 GPUDirect Storage 등으로 데이터를 로딩하고, 원격 서버에서는 RDMA 등으로 데이터를 전송하면서 별도의 분산 로직이 필요합니다.
+
+유의할 점은 다음과 같습니다.
+
+- C2C는 Unified Memory와 다릅니다. 접근 경로와 주소/메모리 관리를 구분해야 합니다.
+- B300 PCIe의 CPU–GPU 전송보다 C2C 대역폭이 큽니다.
+
+### Q5. Multi-Die GPU를 다이 레벨에서 봐야 하는가 (Ch. 2)
+
+> NVIDIA's software and scheduling ensure that work is balanced across the two GPU dies and memory accesses are coherent. This allows developers to largely ignore this complexity, as they appear as one GPU, as NVIDIA intended. >> 엔비디아가 이런 얘기하면 항상 아닌적이 많아서... 아랫단에서는 결국 다이 레벨에서 봐야한다는 점을 간략히 설명해 주시면 감사하겠습니다.
+
+**왜 Multi-Die인가.** 다이 크기를 키우는 데에는 Reticle, Yield, Power/Thermal 제약이 있습니다. 하나의 큰 Monolithic Die에서는 결함 1개가 더 넓은 면적에 영향을 주지만, 작은 Die나 Chiplet으로 나누면 결함의 영향을 더 작은 단위로 격리할 수 있습니다.
+
+**Two Dies, One CUDA GPU.** Blackwell은 다이 사이를 NV-HBI(10 TB/s)로 연결하고 Coherence를 제공해, 일반적인 개발에서는 단일 GPU로 노출됩니다. 각 다이는 SM, L2 slice, Memory를 가지며 하드웨어와 CUDA 런타임이 통합된 프로그래밍 모델을 제공합니다.
+
+| 일반적인 CUDA 코드 | 성능 분석 / 저수준 최적화 |
+| --- | --- |
+| 다이별 수동 작업 분할을 기본적으로 요구하지 않음 | 다이 간 트래픽, 자원 배치, 병목이 영향을 주는지 측정할 가치는 있음 |
+
+참고: NVIDIA Blackwell Architecture, NVIDIA Developer Blog (2026-02-19) [Accelerating Data Processing with NVIDIA Multi-Instance GPU and NUMA Node Localization](https://developer.nvidia.com/blog/accelerating-data-processing-with-nvidia-multi-instance-gpu-and-numa-node-localization/)
+
+#### 토론: CPU 멀티소켓(NUMA)이 GPU 안으로 들어온 것인가
+
+B300이 다이 2개를 쓰는 구조가 CPU 멀티소켓이 GPU 안으로 들어온 것과 같은지 질문이 나왔습니다. 모양은 비슷하지만 굳이 나눠서 생각할 필요는 없다는 쪽으로 정리했습니다. CPU의 NUMA는 소켓마다 메모리 버스가 달라서 생깁니다. GPU의 두 다이는 NV-HBI로 묶여 하나의 Coherent한 메모리 공간으로 보이므로 그런 분리가 없는 것으로 보입니다.
+
+### Q10. L1 Cache와 Shared Memory의 차이 (Ch. 2)
+
+> L1/SMeM이 같은 선상에서 있고 SM에서 개별적으로 활용한다고 보이는데 L1과 SMEM의 구체적인 차이가 궁금합니다.
+
+물리적으로는 SRAM 자원을 공유할 수 있지만 역할과 관리 방식이 다릅니다. SM마다 256 KB register file, L1과 shared memory가 나눠 쓰는 256 KB unified data cache, 64 KB constant cache가 있습니다. 모든 SM은 128 MB L2 cache와 global memory를 공유합니다.
+
+<img src="/images/notes/01/sm-memory-levels.png" alt="GPU 메모리 계층: SM마다 256 KB register file, L1과 shared memory가 나눠 쓰는 256 KB unified data cache, 64 KB constant cache가 있고, 모든 SM이 128 MB L2 cache와 192 GB global memory를 공유" class="mx-auto w-full max-w-[720px]" />
+
+이미지: Cornell Virtual Workshop, GPU Memory Levels
+
+| L1 Cache | Shared Memory (SMEM) |
+| --- | --- |
+| SM별 하드웨어 관리 캐시 | Thread Block이 공유하며 명시적으로 관리 |
+
+Shared Memory 용량은 SM당 CC 10.0에서 228 KB, CC 12.0에서 128 KB입니다. 사용량이 늘면 동시에 상주하는 Block 수가 제한될 수 있습니다.
+
+참고: NVIDIA Blackwell Tuning Guide, Cornell Virtual Workshop "GPU Memory Levels"
+
+#### Occupancy: Block → Warp → SM
+
+스케줄링은 Warp 단위로, 상주 자원 할당은 Thread Block 단위로 이루어집니다. Thread 32개가 Warp 1개이므로, Thread 256개짜리 Block은 Warp 8개입니다. SM에는 여러 Block이 동시에 상주합니다.
+
+Occupancy는 상주 Block 수와 Block당 Warp 수의 곱을 SM 최대 Warp 수로 나눈 값입니다. 예를 들어 Block 4개가 상주하면 4 × 8 = 32 Warp이고, 최대 64 Warp인 SM에서 Occupancy는 50%입니다.
+
+Blackwell CC 10.0 기준(최대 64 Warps/SM, 32 Blocks/SM, 64K Registers/SM, 228 KiB Shared Memory/SM)으로 세 가지 자원 제한을 계산하면 다음과 같습니다.
+
+| 제한 | 조건 | 상주 Block 수 | Occupancy |
+| --- | --- | --- | --- |
+| Register | Thread당 64 Registers, Block당 256 Threads | 65,536 ÷ (256 × 64) = 4 | 4 × 8 = 32 Warps, 50% |
+| Shared Memory | Block당 100 KiB | ⌊228 ÷ 100⌋ = 2 | 2 × 8 = 16 Warps, 25% |
+| Block Count | Block당 32 Threads (Warp 1개) | 최대 32 | 32 × 1 = 32 Warps, 50% |
+
+실제 상주 Block 수는 Register, Shared Memory, Block Limit 등 모든 제약을 적용한 최솟값입니다. Occupancy는 상주(residency) 지표이지 GPU utilization이 아닙니다.
+
+## Rack & Network
+
+### Q6. NVIDIA SHARP의 활용 범위 (Ch. 2)
+
+> NVIDIA SHARP가 흥미로우면서도 어려웠습니다. all reduce같은 연산을 gpu대신 네트워크 단에서 처리할 수 있다같은데 단순히 학습에서만 좋을지, MoE 서빙같은 곳에서도 효과가 있을지 좀 더 활용방안이 있을지 궁금하네요.
+
+SHARP는 Reduction을 GPU 종단에서만 처리하지 않고 네트워크 스위치가 분담하게 합니다. 조직에 비유하면 중간 관리자(Switch)가 데이터를 전달만 하는 대신 부분 Reduction까지 수행하는 셈입니다.
+
+| Without SHARP | With SHARP |
+| --- | --- |
+| Switch는 데이터 전달만 한다 | Switch가 부분 Reduction을 수행한다 |
+| 종단(GPU)에서 Reduction | 종단은 부분 결과를 취합한다 |
+
+워크로드별 기대 효과는 다음과 같습니다.
+
+- **Training**: Gradient All-Reduce가 중심이므로 효과를 기대할 수 있습니다.
+- **MoE Tensor Parallel**: All-Reduce가 있다면 가능성이 있습니다.
+- **MoE Expert Parallel**: All-to-All 중심이라 다릅니다.
+
+스위치가 지원되는 Reduction 연산을 분담해 통신량과 종단 부담을 줄입니다. 실제 이점은 토폴로지와 워크로드에 따라 달라집니다. 위 비유는 실제 SHARP 트리나 All-Reduce 구현 구조와 같은 도식은 아닙니다.
+
+#### 토론: RoCEv2나 InfiniBand에서 DPU와 SHARP는 필수인가
+
+Ch. 1–2에서 PCIe는 NVLink보다 느린 경로로 다뤄집니다. 그러면 RoCEv2나 InfiniBand 구간의 인터커넥트 통신이 병목이 되지 않으려면 DPU와 SHARP가 필수인지 질문이 나왔습니다. 있으면 좋을 것 같다는 의견은 있었지만, 참석자 중에 해당 장비를 직접 본 사람이 없어서 답을 내리지 못했습니다.
+
+### Q7. GB200의 CPU:GPU 비율과 하드웨어 변화 대응 (Ch. 2)
+
+> GB200이 grace CPU 1개 + blackwell GPU 2개라는 구성은 어떻게 정해진건지가 궁금했습니다. 제 추측으로는 이 장에서 설명하는 전력, 냉각 같은 제약 속에서 가장 병목현상을 줄이기 위한 최적의 비율이지 않았을까 생각되는데요 만약 앞으로 CPU 1개에 GPU 4개처럼 비율이 바뀌거나 한 랙 안의 GPU 수가 더 늘어난다면 이 장에서 말하는 기술들(NVLink SHARP이나 NVSHMEM같은 기술들)을 크게 변화시키지 않고 부분적으로만 수정해서 사용할수 있을까요? 아니면 하드웨어 구성이 바뀔 때마다 AI 시스템 엔지니어가 병목 지점을 새로 찾아내고 접근 방식 자체를 다시 짜야 할까요? 저는 실무를 경험해보지 못한 학생이라 실제로 이런 상황을 맞닥뜨리게 된다면 어떻게 대처하는지가 궁금합니다
+
+**다른 하드웨어, 다른 병목.** 1 Grace : 2 GPU 구성은 설계 제약에 따른 선택입니다. 정확한 결정 근거는 공개 자료만으로 단정하기 어렵습니다. 이미 다른 구성도 나오고 있습니다.
+
+- Vera Rubin Superchip: CPU–GPU 메모리와 연결 구조의 발전
+- Groq 3 LPX: SRAM, 정적 스케줄링, LPU 간 통신 강조
+
+<img src="/images/notes/01/vera-rubin-superchip.png" alt="NVIDIA Vera Rubin Superchip: Rubin GPU 2개, Vera CPU 1개, LPDDR5X SOCAMM, NVLink 6, PCIe Gen6 Midplane. 100 PFLOPS AI Compute, 88 Olympus CPU Cores, 2 TB Fast Memory" class="mx-auto w-full max-w-[800px]" />
+
+<img src="/images/notes/01/groq-3-lpx.png" alt="NVIDIA Groq 3 LPX 발표 화면: AI Inference Compute 315 PFLOPS, SRAM 128 GB, Memory Bandwidth 40 PB/s, Scale-Up 256 Chips, 640 TB/s. 트레이에는 LPU 8개, FPGA, Host CPU, BF4, LPU C2C Links" class="mx-auto w-full max-w-[800px]" />
+
+이미지: NVIDIA Vera Rubin 발표 화면, NVIDIA Groq 3 LPX 발표 화면
+
+**AI 시스템 엔지니어에게 바뀌는 것.** 기술 API의 재사용 가능성과 실제 최적화 전략의 유지 여부는 별개의 문제입니다.
+
+| Hardware constraints | Programming models | Reprofiling |
+| --- | --- | --- |
+| 전력, 냉각, 메모리 용량, 대역폭, 인터커넥트, 지연시간이 바뀐다 | NVSHMEM 등 기존 추상화와 프로그래밍 모델은 재사용할 수 있다 | 데이터 배치, 병렬화, 통신을 워크로드별로 다시 측정한다 |
+
+아키텍처가 바뀌어도 모든 코드를 새로 작성하는 것은 아닙니다. 그러나 기존의 실행·통신 전략이 최적일 것이라는 가정은 재검증해야 합니다. 핵심 흐름은 새로운 하드웨어와 실제 워크로드로 측정하고, 병목을 규명하고, 최적화하는 것입니다.
+
+### Q9. NVL72의 NVLink Switch Tray (Ch. 2)
+
+> Figure 2-7. One NVLink Switch tray inside the NVL72 >> 이 도면에 대해 추가적으로 알고 계시는 점이 있다면 부연 부탁드리겠습니다.
+
+질문의 Figure 2-7과 달리, Figure 2-9는 Compute Tray와 NVLink Switch를 연결한 랙 전체 구성을 보여줍니다. NVL72 Rack 구성은 다음과 같습니다.
+
+- 72 Blackwell GPUs
+- 36 Grace CPUs
+- 18 Compute Trays
+- 9 NVLink Switch Trays
+- Rack-scale NVLink Fabric
+
+<img src="/images/notes/01/gb200-nvl72-figure-2-9.png" alt="Figure 2-9. GB200 NVL72 architecture: Compute Tray 18개와 NVLink Switch Tray 9개가 랙 단위 NVLink Fabric으로 연결된 구성" class="mx-auto w-full max-w-[800px]" />
+
+Compute Tray 하나를 개념적으로 축약하면 Grace CPU 2개(각각 LPDDR 포함)와 B200 GPU 4개이고, 모든 Tray가 NVLink Switch Fabric으로 연결됩니다.
+
+이미지: Figure 2-9 원본, [cfregly/ai-performance-engineering, img/aisp_0209.png](https://raw.githubusercontent.com/cfregly/ai-performance-engineering/refs/heads/main/img/aisp_0209.png)
+
+### Q11. 여러 NVL72 랙으로 확장할 때의 모델 분할 (Ch. 2)
+
+> 여러 NVL72 랙으로 작업을 확장할 때 어떤 통신을 같은 NVLink 도메인 안에 유지하고 어떤 통신을 랙 사이로 보내도록 모델을 분할해야 할까?
+
+슬라이드에는 별도 답변이 없습니다. 토론 내용은 모임 후 정리합니다.
+
+## Model Efficiency
+
+### Q3. MoE와 Dense의 실제 이점 (Ch. 2)
+
+> 실제 MoE 모델을 사용해 보신 분이 있다면, 실제 비슷한 성능의 Dense 모델에 비하여 명확한 이점이 있었는지, 아니면 결국 Task에 따라 Gemma, Qwen 모델별로 괜찮다고 하는 Task가 다르다고 알고 있는데, 아직은 그 차이로 가는지 궁금합니다.
+
+슬라이드에는 별도 답변이 없습니다. 토론 내용은 모임 후 정리합니다.
+
+### Q2. 모델 스케일링과 최적화의 한계 (토론 주제)
+
+> 그런 부분은 없었으나 개인적으로 토의하고 싶은 내용이 있습니다. 지금까지 제가 알고 있는 내용이나 책을 읽고나서 느낀점 중에서 하나는 지금의 AI, LLM 같은 분야는 스케일링 법칙으로 모델의 크기를 키우는 방향으로 개선을 하고 있는데 너무 안일한 느낌이 들고 있습니다. 또한 의도하지는 않았을거 같기는 한데 수출 금지로 인해 Deepseek 의 최적화 기법을 시작으로 커널 단위까지의 최적화로 인해 추론 비용이나 학습 비용이 떨어짐, 더큰 GPU, 서버 등의 접근으로 더더욱 AI 모델 스케일링으로 가는거 같습니다. AI 모델 스케일링과 최적화 방식으로 성능 개선은 언젠가 한계를 맞게 될거 같으며 심지어 개인이나 중소기업 들은 접근이 더 힘들게 될거 같은데 다른 분들은 어떻게 생각하는지 궁금합니다
+
+**무엇을 논의하는가.** 원 질문에는 서로 연결되지만 구분해야 할 논점 세 가지가 함께 담겨 있습니다. 서로 다른 질문을 한꺼번에 답하면 기술적 결론이 흐려질 수 있습니다.
+
+| 모델 성능 | 연산 효율화 | 기술 접근성 |
+| --- | --- | --- |
+| 모델 크기와 학습 규모 확대가 어떤 작업에서 성능 향상으로 이어지는가? | 커널, 아키텍처, 학습 방법 개선으로 같은 자원을 더 효율적으로 쓰는가? | 모델 개발에 필요한 자원과 기존 모델을 활용하는 비용은 같은가? |
+
+**용어 구분: Scaling ≠ Scalability ≠ Optimization.** 용어를 먼저 구분해야 무엇을 측정하고 논의할지 정할 수 있습니다.
+
+- **Model Scaling / Scaling Law**: 규모 확대, 그리고 규모·연산량·데이터와 Loss·성능 사이의 경험적 관계. 연산량을 늘린 만큼 성능이 선형으로 증가한다는 뜻이 아닙니다.
+- **Scalability**: 자원 증가에 따라 시스템 처리 능력이 얼마나 확장되는가.
+- **Optimization**: 같은 성능을 더 낮은 시간, 메모리, 연산량, 비용으로 달성하는 방법.
+
+**최적화의 동인은 여러 가지다.** 수출 제한은 일부 기술 선택에 영향을 줄 수 있지만 최적화의 유일한 동인은 아닙니다. 자원 제약 외에도 품질, 속도, 전력, 비용을 개선하려는 동기가 계속 존재합니다.
+
+| 영역 | 예 |
+| --- | --- |
+| Hardware & Systems | Kernel, Memory, Communication, Serving |
+| Model Architecture | MoE, Linear Attention, Quantization |
+| Data Efficiency | 데이터 품질, 레이블링, 데이터 선별 |
+| Training Methods | Distillation, Training Recipe, Post-training |
+
+**성능 한계에 도달했는가.** 현재 성능에 대한 만족도는 사용 목적과 작업 난이도에 따라 다릅니다. 질의응답이나 요약 같은 일상적 사용에서는 현재 모델로도 충분히 만족할 수 있습니다. 코딩, 장기 작업, 정확성과 일관성이 중요한 전문 영역은 여전히 한계를 경험합니다. 발표자의 경험으로는 Sonnet 3.5의 코딩 능력에 처음에는 놀랐지만 오래 적용하며 한계를 발견했고, SVG 생성은 최근 모델에 와서야 개선을 체감했으며, 글쓰기는 장황함과 AI Slop이 여전합니다. "지금 충분하다"와 "성능 개선이 포화되었다"는 다른 주장입니다.
+
+**한계는 아직 열린 질문이다.** 현재의 어려움이 모델 능력의 최종 한계라고 단정할 근거는 충분하지 않습니다.
+
+- 현재의 능력: 일부 작업은 자동화하지만 복잡한 전문 영역은 여전히 도전적입니다.
+- 더 어려운 작업: 능력이 향상될수록 요구되는 작업의 수준도 변합니다.
+- RSI(Recursive Self-Improvement) 가능성: AI가 자신을 개선할 수 있을지, 그 지속 가능성과 한계는 미지수입니다. RSI는 가능한 연구 방향이지 예정된 발전 단계가 아닙니다.
+
+**앞으로의 질문: 기술에 집중.** 첫 모임이므로 폭넓게 다뤘지만, 다음부터는 교재의 구체적인 기술 질문에 집중합니다.
+
+| 권장하는 질문 | 가급적 지양할 질문 |
+| --- | --- |
+| 교재의 특정 기술·페이지를 바탕으로 동작 원리, 병목, 성능 측정, 설계 Trade-off를 묻는 질문 | AI 산업의 포괄적인 전망, 사회·경제적 파급, 넓은 의견 교환, 기술 범위가 불명확한 질문 |
+
+좋은 질문은 어려운 질문이 아니라, 논의할 기술적 대상과 궁금한 지점이 명확한 질문입니다.
 
 ## 참고 자료
 
-참고 자료는 모임 후 이곳에 추가합니다.
+- NVIDIA Blackwell Tuning Guide
+- NVIDIA Developer Blog, [Accelerating Data Processing with NVIDIA Multi-Instance GPU and NUMA Node Localization](https://developer.nvidia.com/blog/accelerating-data-processing-with-nvidia-multi-instance-gpu-and-numa-node-localization/) (2026-02-19)
+- Cornell Virtual Workshop, GPU Memory Levels
+- cfregly/ai-performance-engineering, [Figure 2-9 (aisp_0209.png)](https://raw.githubusercontent.com/cfregly/ai-performance-engineering/refs/heads/main/img/aisp_0209.png)
