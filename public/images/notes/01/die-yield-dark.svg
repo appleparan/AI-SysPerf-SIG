@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 306" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>같은 결함 위치에서 큰 다이와 작은 다이의 수율 차이</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#B4B2A9"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#B4B2A9"/></marker></defs>
+<text x="160" y="30" text-anchor="middle" font-size="14" font-weight="700" fill="#D3D1C7">Large Monolithic Die</text>
+<text x="480" y="30" text-anchor="middle" font-size="14" font-weight="700" fill="#D3D1C7">Smaller Dies / Chiplets</text>
+<rect x="41.0" y="45.0" width="118.0" height="88.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="41.0" y="135.0" width="118.0" height="88.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="161.0" y="45.0" width="118.0" height="88.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="161.0" y="135.0" width="118.0" height="88.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<path d="M85 74 L95 84 M95 74 L85 84" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M195 114 L205 124 M205 114 L195 124" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M65 184 L75 194 M75 184 L65 194" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<rect x="361.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="361.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="361.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="361.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="401.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="401.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="401.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="401.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="441.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="441.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="441.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="441.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="481.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="481.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="481.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="481.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="521.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="521.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<rect x="521.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="521.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="561.0" y="45.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="561.0" y="90.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="561.0" y="135.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<rect x="561.0" y="180.0" width="38.0" height="43.0" rx="3" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<path d="M405 74 L415 84 M415 74 L405 84" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M515 114 L525 124 M525 114 L515 124" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M385 184 L395 194 M395 184 L385 194" stroke="#F08A8A" stroke-width="2.2" stroke-linecap="round"/>
+<text x="160" y="250" text-anchor="middle" font-size="12" fill="#B4B2A9">결함 1개가 더 넓은 면적의 다이에 영향</text>
+<text x="480" y="250" text-anchor="middle" font-size="12" fill="#B4B2A9">결함 영향을 더 작은 단위로 격리 가능</text>
+<rect x="236" y="264" width="12" height="12" rx="2" fill="#4A2424" stroke="#F08A8A" stroke-width="1"/>
+<text x="254" y="274" text-anchor="start" font-size="11" fill="#888780">× 결함 · 영향을 받는 다이</text>
+<rect x="406" y="264" width="12" height="12" rx="2" fill="#1F3A2C" stroke="#6FCF97" stroke-width="1"/>
+<text x="424" y="274" text-anchor="start" font-size="11" fill="#888780">정상 다이</text>
+<text x="320" y="296" text-anchor="middle" font-size="11" fill="#888780">개념도: 수율의 경향을 보여주는 예시이며 실제 웨이퍼·수율 데이터가 아닙니다.</text>
+</svg>
