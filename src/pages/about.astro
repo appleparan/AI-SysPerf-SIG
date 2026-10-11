@@ -1,5 +1,6 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import { siteConfig } from '../config';
 ---
 
 <BaseLayout title="About" currentPath="/about">
@@ -46,6 +47,10 @@ import BaseLayout from '../layouts/BaseLayout.astro';
         <div class="about-credit">
           <dt>참여자</dt>
           <dd><a href="/members">Members</a></dd>
+        </div>
+        <div class="about-credit">
+          <dt>저장소</dt>
+          <dd><a href={siteConfig.social.github} target="_blank" rel="noopener noreferrer">github.com/appleparan/AI-SysPerf-SIG</a></dd>
         </div>
       </dl>
 

@@ -299,7 +299,8 @@ a:hover {
   display: none;
 }
 
-/* Search toggle */
+/* Search toggle and GitHub link */
+.github-link,
 .search-toggle {
   background: none;
   border: none;
@@ -313,6 +314,7 @@ a:hover {
   align-items: center;
 }
 
+.github-link:hover,
 .search-toggle:hover {
   color: var(--accent);
 }
