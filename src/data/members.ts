@@ -3,4 +3,4 @@ export interface Member {
   github: string;
 }
 
-export const members: readonly Member[] = [{ name: '김종수', github: 'appleparan' }];
+export const members: readonly Member[] = [{ name: 'skyobserver', github: 'appleparan' }];
