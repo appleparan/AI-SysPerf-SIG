@@ -714,8 +714,13 @@ a:hover {
   font-size: 0.9rem;
 }
 
+.meeting-presenter,
 .note-presenters {
   color: var(--text-muted);
+}
+
+.meeting-presenter {
+  font-size: 0.9rem;
 }
 
 .break-item .lecture-item-week,
