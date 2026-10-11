@@ -88,6 +88,10 @@ GPU 사이는 NVLink로, CPU와 GPU 사이는 NVLink-C2C로 연결됩니다. C2C
 
 물리적으로는 SRAM 자원을 공유할 수 있지만 역할과 관리 방식이 다릅니다. SM마다 256 KB register file, L1과 shared memory가 나눠 쓰는 256 KB unified data cache, 64 KB constant cache가 있습니다. 모든 SM은 128 MB L2 cache와 global memory를 공유합니다.
 
+<img src="/images/notes/01/sm-memory-levels.png" alt="GPU 메모리 계층: SM마다 256 KB register file, L1과 shared memory가 나눠 쓰는 256 KB unified data cache, 64 KB constant cache가 있고, 모든 SM이 128 MB L2 cache와 192 GB global memory를 공유" class="mx-auto w-full max-w-[720px]" />
+
+이미지: Cornell Virtual Workshop, GPU Memory Levels
+
 | L1 Cache | Shared Memory (SMEM) |
 | --- | --- |
 | SM별 하드웨어 관리 캐시 | Thread Block이 공유하며 명시적으로 관리 |
@@ -142,6 +146,12 @@ SHARP는 Reduction을 GPU 종단에서만 처리하지 않고 네트워크 스�
 - Vera Rubin Superchip: CPU–GPU 메모리와 연결 구조의 발전
 - Groq 3 LPX: SRAM, 정적 스케줄링, LPU 간 통신 강조
 
+<img src="/images/notes/01/vera-rubin-superchip.png" alt="NVIDIA Vera Rubin Superchip: Rubin GPU 2개, Vera CPU 1개, LPDDR5X SOCAMM, NVLink 6, PCIe Gen6 Midplane. 100 PFLOPS AI Compute, 88 Olympus CPU Cores, 2 TB Fast Memory" class="mx-auto w-full max-w-[800px]" />
+
+<img src="/images/notes/01/groq-3-lpx.png" alt="NVIDIA Groq 3 LPX 발표 화면: AI Inference Compute 315 PFLOPS, SRAM 128 GB, Memory Bandwidth 40 PB/s, Scale-Up 256 Chips, 640 TB/s. 트레이에는 LPU 8개, FPGA, Host CPU, BF4, LPU C2C Links" class="mx-auto w-full max-w-[800px]" />
+
+이미지: NVIDIA Vera Rubin 발표 화면, NVIDIA Groq 3 LPX 발표 화면
+
 **AI 시스템 엔지니어에게 바뀌는 것.** 기술 API의 재사용 가능성과 실제 최적화 전략의 유지 여부는 별개의 문제입니다.
 
 | Hardware constraints | Programming models | Reprofiling |
@@ -162,9 +172,11 @@ SHARP는 Reduction을 GPU 종단에서만 처리하지 않고 네트워크 스�
 - 9 NVLink Switch Trays
 - Rack-scale NVLink Fabric
 
+<img src="/images/notes/01/gb200-nvl72-figure-2-9.png" alt="Figure 2-9. GB200 NVL72 architecture: Compute Tray 18개와 NVLink Switch Tray 9개가 랙 단위 NVLink Fabric으로 연결된 구성" class="mx-auto w-full max-w-[800px]" />
+
 Compute Tray 하나를 개념적으로 축약하면 Grace CPU 2개(각각 LPDDR 포함)와 B200 GPU 4개이고, 모든 Tray가 NVLink Switch Fabric으로 연결됩니다.
 
-참고: Figure 2-9 원본은 [cfregly/ai-performance-engineering, img/aisp_0209.png](https://raw.githubusercontent.com/cfregly/ai-performance-engineering/refs/heads/main/img/aisp_0209.png)
+이미지: Figure 2-9 원본, [cfregly/ai-performance-engineering, img/aisp_0209.png](https://raw.githubusercontent.com/cfregly/ai-performance-engineering/refs/heads/main/img/aisp_0209.png)
 
 ### Q11. 여러 NVL72 랙으로 확장할 때의 모델 분할 (Ch. 2)
 
