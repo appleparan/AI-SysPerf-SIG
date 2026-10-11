@@ -26,7 +26,7 @@ export const seasons: readonly Season[] = [
 
 export const meetings: readonly Meeting[] = [
   { week: 1, date: '2026-10-11', season: 1, chapters: 'Ch. 1–2', title: 'Introduction and AI System Overview / AI System Hardware Overview' },
-  { week: 2, date: '2026-10-18', season: 1, chapters: 'Ch. 3', title: 'OS, Docker, and Kubernetes Tuning for GPU-Based Environments' },
+  { week: 2, date: '2026-10-18', season: 1, chapters: 'Ch. 3', title: 'OS, Docker, and Kubernetes Tuning for GPU-Based Environments', presenter: 'skyobserver' },
   { week: 3, date: '2026-10-25', season: 1, chapters: 'Ch. 4', title: 'Tuning Distributed Networking Communication', presenter: 'ainjai' },
   { week: 4, date: '2026-11-01', season: 1, chapters: 'Ch. 5', title: 'GPU-Based Storage I/O Optimizations', presenter: 'petanerd' },
   { week: 5, date: '2026-11-08', season: 2, chapters: 'Ch. 16 전반', title: 'Profiling, Debugging, and Tuning Inference at Scale (1)', presenter: '정지현' },
