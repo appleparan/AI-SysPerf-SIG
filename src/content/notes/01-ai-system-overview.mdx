@@ -82,6 +82,10 @@ GPU 사이는 NVLink로, CPU와 GPU 사이는 NVLink-C2C로 연결됩니다. C2C
 
 참고: NVIDIA Blackwell Architecture, NVIDIA Developer Blog (2026-02-19) [Accelerating Data Processing with NVIDIA Multi-Instance GPU and NUMA Node Localization](https://developer.nvidia.com/blog/accelerating-data-processing-with-nvidia-multi-instance-gpu-and-numa-node-localization/)
 
+#### 토론: CPU 멀티소켓(NUMA)이 GPU 안으로 들어온 것인가
+
+B300이 다이 2개를 쓰는 구조가 CPU 멀티소켓이 GPU 안으로 들어온 것과 같은지 질문이 나왔습니다. 모양은 비슷하지만 굳이 나눠서 생각할 필요는 없다는 쪽으로 정리했습니다. CPU의 NUMA는 소켓마다 메모리 버스가 달라서 생깁니다. GPU의 두 다이는 NV-HBI로 묶여 하나의 Coherent한 메모리 공간으로 보이므로 그런 분리가 없는 것으로 보입니다.
+
 ### Q10. L1 Cache와 Shared Memory의 차이 (Ch. 2)
 
 > L1/SMeM이 같은 선상에서 있고 SM에서 개별적으로 활용한다고 보이는데 L1과 SMEM의 구체적인 차이가 궁금합니다.
