@@ -1,0 +1,213 @@
+---
+title: "Ch. 3 OS, Docker, and Kubernetes Tuning for GPU-Based Environments"
+week: 2
+presenters: ["appleparan"]
+order: 1
+---
+
+import ThemeImage from '../../components/ThemeImage.astro';
+
+# Ch. 3 OS, Docker, and Kubernetes Tuning for GPU-Based Environments
+
+사전 질문 6개를 네 주제로 묶어 토론했습니다. 질문 순서는 토론 흐름에 맞춰 재구성했고, 질문 원문은 제출된 그대로 옮겼습니다. MPS와 MIG 질문이 많아서, 질문에 답하기 전에 CUDA Context부터 MIG까지 개념을 먼저 정리했습니다.
+
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| NUMA & I/O | Data Placement, CPU–GPU | Q1 |
+| MPS / MIG Use Cases | LLM Serving, Isolation | Q2, Q3 |
+| MPS / MIG Performance | HBM Bandwidth, Bottleneck | Q4, Q5 |
+| Monitoring | DCGM, GPU Metrics | Q6 |
+
+## NUMA & I/O
+
+### Q1. 서로 다른 NUMA의 GPU가 같은 데이터를 쓸 때
+
+> I/O 에 대한 최적화가 주된 내용으로 GPU의 유휴시간을 최소화 하는것이 중요하고 하드웨어단에서의 최적화를 말하고 있는 것 같습니다.
+>
+> 만약 서로 다른 NUMA에 연결된 GPU 두 개가 같은 데이터를 필요로 한다면 어디에 두어야 유리할까요? 그리고 결과들을 모아 CPU 에서 별도의 처리가 필요한 작업이라면 어떤 방식이 유리할까요?
+>
+> 제가 생각할때는 서로 다른 NUMA에 있는 메모리에 둘다 저장하고 처리하는 방식이 최적화된것처럼 보이는데 어떻게 생각하시나요?
+
+**데이터 배치는 두 가지 선택지의 비용 비교입니다.** 두 GPU 모두 결국 자기 HBM에 데이터를 올린다고 가정하고, CPU 메모리에서 어디서 공급하느냐만 비교합니다.
+
+- **A. 단일 NUMA**: 한 NUMA 노드의 DRAM에만 둡니다. 복제 비용은 없지만, 다른 NUMA에 붙은 GPU는 원격 경로로 데이터를 받습니다.
+- **B. NUMA별 복제**: 각 NUMA 노드의 DRAM에 복사본을 둡니다. 처음에 복제하는 비용이 들지만, 이후 H2D 전송은 두 GPU 모두 로컬 경로를 씁니다.
+
+<ThemeImage lightSrc="/images/notes/02/numa-placement-light.svg" darkSrc="/images/notes/02/numa-placement-dark.svg" alt="A 단일 NUMA: NUMA 0 DRAM의 데이터를 GPU 0은 로컬로, GPU 1은 원격 경로로 받는다. B NUMA별 복제: 각 NUMA DRAM에 복사본을 두고 두 GPU 모두 로컬 경로로 받는다" class="mx-auto w-full max-w-[720px]" />
+
+질문자의 생각처럼 B가 유리한 경우가 많습니다. 다만 항상 그렇지는 않습니다. 데이터를 한 번만 올리고 끝나면 복제 비용이 더 클 수 있습니다. 결정 기준은 복제 비용, 전송 빈도, 메모리 용량, PCIe/NUMA 토폴로지입니다.
+
+**결과 취합도 두 가지 방식을 비교합니다.** GPU 결과의 최종 후처리는 CPU 0에서 한다고 가정합니다.
+
+- **A. CPU 0 메모리에 수집**: 두 GPU 결과를 모두 NUMA 0 DRAM으로 가져옵니다. GPU 1의 D2H 전송은 원격 경로를 탑니다.
+- **B. GPU에서 먼저 집계**: 각 GPU에서 부분 Reduce를 하고, 작아진 결과만 CPU로 보냅니다.
+
+<ThemeImage lightSrc="/images/notes/02/numa-gather-light.svg" darkSrc="/images/notes/02/numa-gather-dark.svg" alt="A: GPU 0과 GPU 1의 결과를 NUMA 0 DRAM에 모으며 GPU 1은 원격 D2H를 거친다. B: 각 GPU에서 먼저 Reduce하고 작은 결과만 CPU 최종 집계로 보낸다" class="mx-auto w-full max-w-[720px]" />
+
+판단 기준은 GPU 1의 원격 D2H 비용과, GPU에서 먼저 집계해 줄어드는 CPU 전송량입니다. 결과가 크고 GPU에서 줄일 수 있다면 B가 유리합니다.
+
+## 개념: CUDA Context에서 MIG까지
+
+Q2부터 Q5까지는 MPS와 MIG를 다룹니다. 두 기술의 차이는 GPU가 여러 프로세스의 메모리와 실행을 어떻게 다루는지 알아야 보입니다.
+
+### CPU와 GPU는 메모리를 다른 주체가 관리한다
+
+시스템 메모리는 Linux Kernel이, GPU HBM은 CUDA Driver/Runtime이 관리합니다.
+
+| CPU · System DRAM | GPU · HBM |
+| --- | --- |
+| Linux Kernel + MMU가 페이지 단위로 할당·매핑 | 드라이버가 GPU 할당을 추적 |
+| cgroups로 메모리 사용 제한 | 프로세스별 할당과 메모리 풀 |
+| reclaim / swap 지원 | CPU cgroups로 HBM을 직접 제한할 수 없음 |
+
+<ThemeImage lightSrc="/images/notes/02/cpu-gpu-memory-light.svg" darkSrc="/images/notes/02/cpu-gpu-memory-dark.svg" alt="왼쪽은 Process A/B가 Linux Kernel + MMU를 거쳐 Physical Pages(DRAM)에 매핑되는 구조, 오른쪽은 CUDA Process A/B가 CUDA Runtime/Driver를 거쳐 Device Allocations(HBM)를 받는 구조" class="mx-auto w-full max-w-[680px]" />
+
+여러 CUDA Context는 같은 물리 HBM을 놓고 경쟁합니다. 그러나 서로의 할당 메모리에 자유롭게 접근하지는 못합니다.
+
+### CUDA Context와 Warp는 서로 다른 계층이다
+
+CUDA Context는 프로세스가 GPU를 쓰기 위한 실행 환경입니다. 메모리 할당, 커널 코드, Stream과 Event가 Context에 속합니다. Context에서 Kernel을 실행하면 GPU가 Thread Block을 SM에 배치하고, SM 안의 Warp Scheduler가 실행 가능한 Warp의 명령을 고릅니다.
+
+<ThemeImage lightSrc="/images/notes/02/context-warp-light.svg" darkSrc="/images/notes/02/context-warp-dark.svg" alt="Process A/Context A와 Process B/Context B가 CUDA Driver에 Kernel 실행을 요청하고, Physical GPU에서 Thread Block 0~2가 각각 Warp로 나뉘어 SM에 배치되는 계층 구조" class="mx-auto w-full max-w-[680px]" />
+
+| 계층 | 역할 |
+| --- | --- |
+| Context | 실행 환경 |
+| Thread Block | SM 배치 단위 |
+| Warp | SM 내부 실행 단위 |
+
+### MPS는 여러 프로세스의 Kernel을 함께 실행한다
+
+같은 GPU를 공유해도 Context 실행 방식은 다를 수 있습니다. 기본 공유에서는 서로 다른 Context의 실행을 GPU가 번갈아 조정하므로 전환 오버헤드와 간섭이 생길 수 있습니다. MPS(Multi-Process Service)를 쓰면 서로 다른 프로세스의 Kernel도 동시에 실행될 수 있습니다.
+
+<ThemeImage lightSrc="/images/notes/02/mps-timeline-light.svg" darkSrc="/images/notes/02/mps-timeline-dark.svg" alt="기본 공유에서는 Context A와 B의 실행이 시간축에서 번갈아 나타나고, MPS에서는 A와 B의 Kernel이 같은 시간에 겹쳐 실행되는 개념도" class="mx-auto w-full max-w-[720px]" />
+
+여러 프로세스의 CUDA 작업은 MPS Server를 거쳐 GPU에 제출됩니다. 자원이 남고 동시 실행 조건이 맞으면 SM의 실행 자원을 더 효율적으로 씁니다.
+
+<ThemeImage lightSrc="/images/notes/02/mps-server-light.svg" darkSrc="/images/notes/02/mps-server-dark.svg" alt="Process A, B, C의 작업이 MPS Server를 거쳐 GPU SMs에 제출되고, 서로 다른 프로세스의 Kernel이 조건에 따라 동시 실행되는 개념도" class="mx-auto w-full max-w-[680px]" />
+
+유의할 점은 다음과 같습니다.
+
+- Context 전환이 줄어드는 것과 GPU 메모리 격리는 다릅니다. 프로세스별 GPU 메모리 할당은 그대로이고, 용량과 대역폭을 경쟁합니다.
+- Volta 이후 MPS 클라이언트의 주소 공간은 분리됩니다.
+- 실제 동시 실행은 Kernel의 자원 사용량, 의존성, 동기화, 스케줄링에 따라 달라집니다.
+
+### MIG는 실행 공유가 아니라 하드웨어 분리다
+
+MIG(Multi-Instance GPU)는 물리 GPU 한 장 안에서 연산 자원(SM)과 메모리 자원(HBM)을 인스턴스별로 나눕니다. 각 인스턴스는 정해진 프로파일에 따라 격리되고, 독립적으로 Kernel을 실행합니다.
+
+<ThemeImage lightSrc="/images/notes/02/mig-partition-light.svg" darkSrc="/images/notes/02/mig-partition-dark.svg" alt="Physical GPU 안에 MIG Instance 0과 1이 있고, 각 인스턴스가 자기 SM Partition과 HBM Partition을 가진 구조" class="mx-auto w-full max-w-[640px]" />
+
+다만 물리 GPU는 하나이므로 전력, 열, 장치 전체 장애까지 완전히 독립적이지는 않습니다.
+
+## MPS / MIG Use Cases
+
+### Q2. MPS와 MIG의 실무 활용
+
+> 이번 챕터에서 언급된 내용들중 MPS나 MIG를 실제 업무간에 활용 경험이 있으신 분이 있으신지 궁금합니다. onpremise LLM을 업무에서 다룰때, MIG의 경우 작은 GPU로 나누기다 보니 모델별로 나눠서 가중치를 로드하더라도 결국 캐시때문에 의미가 없어져서요. 다른 활용 관점이 있는지 궁금해요
+
+**대형 LLM 서빙에서는 GPU를 나누는 실익이 작습니다.** MPS는 자원 간섭이, MIG는 정적 분할과 운영 복잡성이 부담입니다.
+
+| 사용 경험 | LLM에서의 제약 | 여전히 유용한 경우 |
+| --- | --- | --- |
+| 발표자는 MIG를 써 봤지만 LLM 서빙에 적용한 적은 없습니다. 여러 MIG 디바이스를 한 작업에 함께 쓰는 데는 실패했습니다. | A100, H100, H200에서는 대형 LLM에 GPU 한 장도 부족합니다. vLLM과 SGLang은 자체 배칭과 요청 스케줄링을 제공합니다. | Tabular ML, CNN처럼 GPU를 적게 쓰는 워크로드. Embedding, Reranker, SLM. B200/B300에서 소형 모델을 나눠 올리는 경우. |
+
+### Q3. MPS의 OOM 리스크와 MIG와의 선택
+
+> MPS는 GPU 메모리를 분할하지 않아서 한 프로세스가 OOM이 나면 같은 GPU를 쓰는 다른 프로세스까지 영향을 받을 수 있다고 이해했습니다. MPS의 이점은 유지하면서 이 리스크를 어떻게 완화할 수 있을까요? 이러한 리스크가 거의 없는 환경에서만 MPS를 활용해야 하는걸까요? 그리고 이 리스크를 감안하고 MPS를 쓰는 것이 MIG보다 유리해지는 사례는 어떤게 있을까요?
+
+**MPS는 유연하게 공유하고, MIG는 미리 나눠서 격리합니다.** MPS로 OOM과 자원 경쟁을 완화할 수는 있지만 완전히 격리하지는 못합니다.
+
+| MPS · Dynamic Sharing | MIG · Hardware Partition |
+| --- | --- |
+| 프로세스를 비교적 자유롭게 추가·종료 | 워크로드에 맞춰 프로파일을 미리 결정 |
+| MIG 프로파일 재구성이 필요 없음 | 바꾸려면 해당 인스턴스의 작업을 멈추고 재구성 |
+| OOM과 자원 경쟁을 완화할 수 있지만 완전 격리는 아님 | GPU 모델이나 모드 전환에 따라 Reset이 필요할 수 있음 |
+
+선택 기준은 다음과 같습니다.
+
+- 신뢰할 수 있는 워크로드를 유연하게 공유 → **MPS**
+- 예측 가능한 자원과 강한 격리 → **MIG**
+
+## MPS / MIG Performance
+
+### Q4. HBM 대역폭을 포화시키는 작업과 MPS
+
+> MPS는 여러 프로세스의 커널을 동시에 실행해 GPU의 남는 자원을 활용하고 전체 처리량을 높이는 기술이고, MIG는 정해진 프로파일에 따라 GPU의 연산, 메모리 자원을 하드웨어적으로 나누어 사용하는 기술이라고 이해했습니다.
+>
+> 그렇다면 각 프로세스가 단독 실행 시에도 HBM 메모리 대역폭을 거의 포화시키는 작업이라면, MPS로 함께 실행할 때 대역폭 경쟁 때문에 개별 작업의 지연 시간은 늘고 전체 처리량 향상은 제한될 것 같습니다.
+>
+> 교재에서는 자원 사용이 서로 보완되는 작업에서 MPS가 유리하다고 설명하는데, 실제로는 어떤 지표나 실험으로 함께 실행할 작업과 적절한 동시 실행 수를 결정하는지와, 또 이런 상황에서 MIG를 선택하면 대역폭 경쟁을 어떻게 격리하며, 처리량과 지연 시간 측면에서는 어떤 차이가 생기는지 궁금합니다.
+
+### Q5. 작은 MIG 인스턴스에서 CPU와 전송 병목
+
+> 하나의 GPU를 작은 MIG 인스턴스 여러 개로 나누어 독립적인 추론 서비스를 운영할 때, 어떤 조건에서 CPU의 데이터 공급이나 CPU–GPU 전송이 병목이 되는가? 분할 크기 감소의 영향과 동시 작업 수 증가의 영향을 어떻게 구분할 수 있는가?
+
+### Q4·Q5 답변: MIG는 GPU 안의 대역폭만 격리한다
+
+두 질문에 함께 답했습니다. MIG는 GPU 내부 대역폭을 격리하지만, 여러 서비스의 CPU 전처리와 PCIe 전송 경쟁은 남습니다.
+
+**MIG의 계층은 GPU → GI → CI입니다.** GI(GPU Instance)는 메모리까지 나눕니다. CI(Compute Instance)는 같은 GI 안에서 SM 연산 자원만 다시 나눕니다.
+
+<ThemeImage lightSrc="/images/notes/02/mig-hierarchy-light.svg" darkSrc="/images/notes/02/mig-hierarchy-dark.svg" alt="Physical GPU 안에 GPU Instance 0과 1이 있다. GI 0은 HBM, L2, Memory Controller로 된 Memory Slices 위에 Compute Instance 0과 1을 두고, GI 1은 별도 HBM, L2, MC 위에 Compute Instance 하나를 둔다" class="mx-auto w-full max-w-[680px]" />
+
+| 관계 | 메모리와 대역폭 |
+| --- | --- |
+| 다른 GI 사이 | Memory Bandwidth QoS로 분리 |
+| 같은 GI의 CI 사이 | 메모리와 대역폭을 공유 |
+
+출처: [NVIDIA MIG User Guide, Concepts](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/concepts.html) (A100 예시)
+
+**병목이 생기는 위치가 다릅니다.**
+
+| MPS · Shared GPU | MIG · Hardware Partition |
+| --- | --- |
+| HBM 대역폭, L2, SM을 공유 | 인스턴스별로 HBM 대역폭을 분할 |
+| 이미 HBM이 포화라면 동시 실행 이득이 제한됨 | 서로 다른 GI 사이의 대역폭 간섭을 완화 |
+| P95/P99 지연 시간이 오를 수 있음 | CPU, DRAM, PCIe는 여전히 공유 |
+
+<ThemeImage lightSrc="/images/notes/02/mps-mig-bottleneck-light.svg" darkSrc="/images/notes/02/mps-mig-bottleneck-dark.svg" alt="위쪽 Host 계층(CPU 전처리, DRAM, PCIe)은 MPS와 MIG 모두 공유한다. 아래 왼쪽 MPS는 여러 프로세스가 HBM 대역폭, L2, SM을 함께 쓰고, 오른쪽 MIG는 인스턴스마다 HBM 조각을 따로 가진다" class="mx-auto w-full max-w-[720px]" />
+
+Q4에 대한 답은 다음과 같습니다. 단독으로도 HBM을 포화시키는 작업이라면 MPS로 묶어도 처리량 이득은 작고 꼬리 지연 시간이 늘 수 있습니다. MIG는 GI 단위로 대역폭을 나누므로 서로의 간섭은 줄지만, 각 인스턴스는 자기 몫의 대역폭만 씁니다.
+
+Q5에 대한 답은 다음과 같습니다. 인스턴스를 작게 나눌수록 같은 GPU 위의 서비스 수가 늘고, 그만큼 CPU 전처리와 PCIe 전송을 나눠 쓰는 서비스도 늘어납니다. MIG는 이 Host 쪽 경쟁을 격리하지 않습니다.
+
+## Monitoring
+
+### Q6. Kubernetes에서 DCGM으로 볼 수 있는 메트릭
+
+> 쿠베에서 DCGM으로 볼 수 있는 메트릭이 nvidia-smi 에서 볼 수 있는 것 이외에 더 있는지, 그리고 없으면 추가적인 메트릭을 볼 수 있는 플러그인이 있는지 궁급합니다.
+
+**DCGM Exporter는 Kubernetes 전용 메트릭이 아닙니다.** DCGM은 GPU에서 메트릭을 수집하고, Kubernetes는 그 메트릭을 Pod와 Node에 연결하는 운영 맥락을 더합니다.
+
+핵심은 GPU 동작 원리를 이해하고, 맞는 메트릭을 고르고, 병목 원인을 판단하는 것입니다. `GPU_UTIL` 하나로 판단하기보다 `SM_ACTIVE`, `DRAM_ACTIVE`, Tensor Active, 호스트 PSI(Pressure Stall Information) 등을 함께 해석해야 합니다.
+
+**GPU_UTIL이 같아도 학습 효율은 다를 수 있습니다.** `GPU_UTIL`은 커널이 실행 중인 시간의 비율이지 SM을 얼마나 쓰는지가 아닙니다. 아래는 같은 모델을 Batch Size만 바꿔 학습한다고 가정한 가상 수치입니다(실측 아님).
+
+| Case | 특징 | GPU_UTIL | SM_ACTIVE |
+| --- | --- | --- | --- |
+| A · Batch Size 1 | 작은 GEMM, GPU 병렬성 부족. 커널은 계속 돌지만 일부 SM만 활용 | 95% | 20% |
+| B · Batch Size 128 | 큰 GEMM, 더 많은 SM 활용 가능 | 95% | 85% |
+
+<ThemeImage lightSrc="/images/notes/02/gpu-util-sm-active-light.svg" darkSrc="/images/notes/02/gpu-util-sm-active-dark.svg" alt="Case A(Batch Size 1)는 GPU_UTIL 95%에 SM_ACTIVE 20%, Case B(Batch Size 128)는 GPU_UTIL 95%에 SM_ACTIVE 85%인 가상 비교 그림" class="mx-auto w-full max-w-[680px]" />
+
+Batch를 키운 효과는 모델과 커널에 따라 다르므로, 실제 효과는 Samples/sec와 Step Time으로 확인합니다.
+
+**메트릭 조합으로 병목을 판정하는 예시입니다.** 발표자의 [Algalon](https://github.com/appleparan/Algalon)이 쓰는 GPU 활용 품질 판정표입니다.
+
+| 관찰 | 판정 | 다음 행동 |
+| --- | --- | --- |
+| GPU_UTIL 높음, SM_ACTIVE 높음, DRAM_ACTIVE 높음, tensor 낮음 | 메모리 대역폭 병목 (decode의 전형) | 배치 키우기(max running·KV 예산), 양자화·KV 압축, decode GPU 늘리기 |
+| GPU_UTIL 높음, SM_ACTIVE 낮음 (GPU_UTIL/100 − SM_ACTIVE 격차 큼) | GPU가 기다리는 중: CPU, IO, 스케줄러 | 스케줄러 점유(`process_*`, `get_next_batch`)와 호스트 PSI·run queue 확인 |
+| tensor 높음, DRAM 중간 | 연산 병목 (정상적으로 바쁨) | 조치 불필요, 용량 추가로만 해결 |
+| 전부 낮은데 엔진 큐가 쌓임 | 엔진 설정 한계 (max running·KV 예산·admission) | KV 사용률·retract, 라우터·ingress 한계값 확인 |
+| 전부 낮고 큐도 없음 | 부하가 없음. 병목은 바깥 단계 | 단계별 latency에서 벌어진 단계로 이동 |
+| 호스트 PSI 높음, NUMA 원격 비율 높음 | 호스트 병목 (토크나이즈, KV 오프로드·HiCache, 원격 NUMA 복사) | resctrl로 워커의 NUMA 노드 확인, CPU pinning |
+| throttle 시간 > 0, SM 클럭 하락 | 전력·열 제한 | 전력 한도·냉각, 워커 재배치 |
+
+임계값은 휴리스틱입니다. `DCGM_FI_PROF_*` 메트릭은 DCP(Data Center Profiling)를 지원하는 GPU에서만 나옵니다. 패널이 비어 있으면 먼저 이것을 의심합니다.
+
+## 참고 자료
+
+- NVIDIA, [MIG User Guide: Concepts](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/concepts.html)
+- appleparan, [Algalon](https://github.com/appleparan/Algalon)
