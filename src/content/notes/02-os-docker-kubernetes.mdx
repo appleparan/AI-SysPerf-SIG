@@ -9,7 +9,7 @@ import ThemeImage from '../../components/ThemeImage.astro';
 
 # Ch. 3 OS, Docker, and Kubernetes Tuning for GPU-Based Environments
 
-사전 질문 6개를 네 주제로 묶어 토론했습니다. 질문 순서는 토론 흐름에 맞춰 재구성했고, 질문 원문은 제출된 그대로 옮겼습니다. MPS와 MIG 질문이 많아서, 질문에 답하기 전에 CUDA Context부터 MIG까지 개념을 먼저 정리했습니다.
+사전 질문 6개를 네 주제로 묶어 토론했고, 마지막에 현장 질문 하나를 더 다뤘습니다. 질문 순서는 토론 흐름에 맞춰 재구성했고, 질문 원문은 제출된 그대로 옮겼습니다. MPS와 MIG 질문이 많아서, 질문에 답하기 전에 CUDA Context부터 MIG까지 개념을 먼저 정리했습니다.
 
 | 주제 | 키워드 | 질문 |
 | --- | --- | --- |
@@ -17,6 +17,7 @@ import ThemeImage from '../../components/ThemeImage.astro';
 | MPS / MIG Use Cases | LLM Serving, Isolation | Q2, Q3 |
 | MPS / MIG Performance | HBM Bandwidth, Bottleneck | Q4, Q5 |
 | Monitoring | DCGM, GPU Metrics | Q6 |
+| 현장 질문 | Kubernetes vs. GPU VM | Q7 |
 
 ## NUMA & I/O
 
@@ -111,6 +112,10 @@ MIG(Multi-Instance GPU)는 물리 GPU 한 장 안에서 연산 자원(SM)과 메
 | 사용 경험 | LLM에서의 제약 | 여전히 유용한 경우 |
 | --- | --- | --- |
 | 발표자는 MIG를 써 봤지만 LLM 서빙에 적용한 적은 없습니다. 여러 MIG 디바이스를 한 작업에 함께 쓰는 데는 실패했습니다. | A100, H100, H200에서는 대형 LLM에 GPU 한 장도 부족합니다. vLLM과 SGLang은 자체 배칭과 요청 스케줄링을 제공합니다. | Tabular ML, CNN처럼 GPU를 적게 쓰는 워크로드. Embedding, Reranker, SLM. B200/B300에서 소형 모델을 나눠 올리는 경우. |
+
+#### 토론: GPU 클라우드에서는 MIG로 GPU를 나눠 판다
+
+MIG의 상업적 용도가 하나 더 나왔습니다. GPU 클라우드는 GPU 2장이 꽂힌 노드에서 고객이 1장만 원하면 MIG로 1장 분량만 분리해서 제공합니다. 기술적 이득보다 자원을 판매 단위로 나누는 데 쓰는 사례입니다.
 
 ### Q3. MPS의 OOM 리스크와 MIG와의 선택
 
@@ -207,7 +212,27 @@ Batch를 키운 효과는 모델과 커널에 따라 다르므로, 실제 효과
 
 임계값은 휴리스틱입니다. `DCGM_FI_PROF_*` 메트릭은 DCP(Data Center Profiling)를 지원하는 GPU에서만 나옵니다. 패널이 비어 있으면 먼저 이것을 의심합니다.
 
+## 현장 질문
+
+### Q7. AI 워크로드는 Kubernetes인가 GPU VM인가
+
+> AI 워크로드를 Kubernetes에서 돌릴지 GPU VM에서 돌릴지 논쟁이 있었는데, 요즘 CoreWeave처럼 아예 Kubernetes로 가져오라는 흐름입니다. GPU를 PCI passthrough로 VM에 줘도 고객은 그 안에서 다시 컨테이너를 띄우는데, 베어메탈에 Kubernetes를 바로 올리는 것이 맞을까요? (모임 중 질문, 요약)
+
+**LLM 서빙과 대규모 학습은 Kubernetes와 베어메탈 쪽으로 가고 있습니다.** 이유는 운영 방식의 변화입니다.
+
+- **서빙**: LLM 서빙이 서비스가 되면서 Kubernetes가 기본 요구사항이 되었습니다. 서빙 엔진은 자주 죽습니다. 다시 띄우고 관측 시스템을 붙이고 멀티노드로 확장하려면 Docker만으로는 한계가 있습니다.
+- **학습**: 대규모 학습에서는 늘 어딘가 장애가 납니다. 발표자는 10~20% 정도가 문제를 겪는다고 했고, 근거로 Meta의 [Revisiting Reliability in Large-Scale Machine Learning Research Clusters](https://ai.meta.com/research/publications/revisiting-reliability-in-large-scale-machine-learning-research-clusters/)를 들었습니다. 논문에서 이 수치에 가장 가까운 값은 GPU 수가 아니라 런타임입니다. 하드웨어 장애는 job의 1% 미만에서 일어나지만 GPU 런타임의 19%에 영향을 줍니다. 1024-GPU job의 MTTF(Mean Time to Failure, 평균 장애 간격)는 7.9시간입니다. 학습은 모든 GPU가 살아 있다고 가정하므로, 장애가 나면 바로 복구하고 이전 checkpoint에서 다시 시작해야 합니다. 스토리지를 붙이기도 Kubernetes가 편합니다.
+
+**VM보다 베어메탈을 선호하는 경우가 많습니다.** VM에 GPU를 줄 때는 PCIe passthrough를 씁니다. 발표자는 이 경로에서 IOMMU 같은 커널 쪽 제약 때문에 레이턴시가 늘어난다고 들었습니다. NVLink 없이 PCIe로 장치끼리 많이 통신하는 구성일수록 이 영향이 크다고 합니다.
+
+**GPU를 나눌지는 워크로드에 달려 있습니다.** MPS와 MIG는 tabular 워크로드가 많은 곳에서 의미가 있습니다. LLM만 다루는 곳은 GPU 한 장으로도 모자라고 노드도 여러 개 쓰므로 나눌 필요가 적습니다.
+
+#### 발표자 코멘트: Ch. 3에서 무엇이 중요한가
+
+이 장에서 Kubernetes, Docker, MPS 자체는 상대적으로 덜 중요합니다. 커널과 GPU가 어떻게 통신하는지, CUDA Toolkit과 CUDA Driver가 각각 어떤 역할을 하는지 이해하는 것이 더 중요합니다.
+
 ## 참고 자료
 
 - NVIDIA, [MIG User Guide: Concepts](https://docs.nvidia.com/datacenter/tesla/mig-user-guide/concepts.html)
 - appleparan, [Algalon](https://github.com/appleparan/Algalon)
+- Meta AI, [Revisiting Reliability in Large-Scale Machine Learning Research Clusters](https://ai.meta.com/research/publications/revisiting-reliability-in-large-scale-machine-learning-research-clusters/)
