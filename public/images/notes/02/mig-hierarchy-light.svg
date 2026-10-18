@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 370" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>MIG의 계층: GPU → GI → CI</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#5F5E5A"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#5F5E5A"/></marker></defs>
+<rect x="20" y="20" width="680" height="310" rx="6" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="36" y="44" text-anchor="start" font-size="13" font-weight="700" fill="#2C2C2A">Physical GPU</text>
+<rect x="40" y="58" width="420" height="160" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="250" y="80" text-anchor="middle" font-size="13" font-weight="700" fill="#2C2C2A">GPU Instance 0 (GI)</text>
+<rect x="56" y="92" width="188" height="60" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="150" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">Compute Instance 0 (CI)</text>
+<rect x="256" y="92" width="188" height="60" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="350" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">Compute Instance 1 (CI)</text>
+<rect x="56" y="162" width="388" height="44" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="250" y="189" text-anchor="middle" font-size="13" font-weight="700" fill="#1B6B45">Memory Slices · HBM / L2 / Memory Controllers</text>
+<rect x="500" y="58" width="180" height="160" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="590" y="80" text-anchor="middle" font-size="13" font-weight="700" fill="#2C2C2A">GPU Instance 1</text>
+<rect x="516" y="92" width="148" height="60" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="590" y="126" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">Compute Instance</text>
+<rect x="516" y="162" width="148" height="44" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="590" y="189" text-anchor="middle" font-size="13" font-weight="700" fill="#1B6B45">별도 HBM · L2 · MC</text>
+<line x1="463" y1="130" x2="497" y2="130" stroke="#EF9F27" stroke-width="1.6" marker-end="url(#ah)" marker-start="url(#ahs)"/>
+<line x1="480" y1="134" x2="480" y2="270" stroke="#EF9F27" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="480" y="290" text-anchor="middle" font-size="12" font-weight="700" fill="#854F0B">다른 GI 사이: Memory Bandwidth QoS</text>
+<path d="M56 226 V234 H444 V226" fill="none" stroke="#5F5E5A" stroke-width="1.2"/>
+<text x="250" y="254" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">같은 GI의 CI 사이: 메모리·대역폭 공유</text>
+<text x="360" y="352" text-anchor="middle" font-size="11" fill="#888780">Source: NVIDIA MIG User Guide · Concepts (A100 예시)</text>
+</svg>

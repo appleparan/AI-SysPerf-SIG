@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>MIG는 실행 공유가 아니라 하드웨어 분리</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#5F5E5A"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#5F5E5A"/></marker></defs>
+<rect x="20" y="20" width="680" height="250" rx="6" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="36" y="44" text-anchor="start" font-size="13" font-weight="700" fill="#2C2C2A">Physical GPU</text>
+<rect x="44" y="58" width="300" height="192" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="194" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="#2C2C2A">MIG Instance 0</text>
+<rect x="64" y="96" width="260" height="60" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="194" y="131" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">SM Partition</text>
+<rect x="64" y="170" width="260" height="60" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="194" y="205" text-anchor="middle" font-size="13" font-weight="700" fill="#1B6B45">HBM Partition</text>
+<rect x="376" y="58" width="300" height="192" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="526" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="#2C2C2A">MIG Instance 1</text>
+<rect x="396" y="96" width="260" height="60" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="526" y="131" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">SM Partition</text>
+<rect x="396" y="170" width="260" height="60" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="526" y="205" text-anchor="middle" font-size="13" font-weight="700" fill="#1B6B45">HBM Partition</text>
+<line x1="360" y1="54" x2="360" y2="254" stroke="#5F5E5A" stroke-width="3"/>
+<text x="360" y="296" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">각 MIG 인스턴스는 독립적으로 커널 실행 가능 · 정해진 프로파일 기준으로 격리</text>
+<text x="360" y="316" text-anchor="middle" font-size="11" fill="#888780">단, 하나의 물리 GPU이므로 전력·열·장치 전체 장애까지 완전히 독립적인 것은 아님</text>
+</svg>
