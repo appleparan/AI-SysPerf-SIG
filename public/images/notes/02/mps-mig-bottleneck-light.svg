@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 424" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>MPS vs. MIG · 병목은 어디서 발생하나?</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#5F5E5A"/></marker><marker id="ahs" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M10,1 L0,5 L10,9 z" fill="#5F5E5A"/></marker></defs>
+<rect x="40" y="22" width="640" height="56" rx="6" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="1.2"/>
+<rect x="40" y="22" width="640" height="56" rx="6" fill="none" stroke="#EF9F27" stroke-width="1.2"/>
+<text x="360" y="46" text-anchor="middle" font-size="13" font-weight="700" fill="#2C2C2A">Host · CPU 전처리 · DRAM · PCIe</text>
+<text x="360" y="66" text-anchor="middle" font-size="12" font-weight="700" fill="#854F0B">MPS와 MIG 모두 공유</text>
+<line x1="190" y1="80" x2="190" y2="118" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#ah)"/>
+<line x1="540" y1="80" x2="540" y2="118" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="20" y="120" width="340" height="252" rx="6" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="36" y="144" text-anchor="start" font-size="13" font-weight="700" fill="#2C2C2A">MPS · Shared GPU</text>
+<rect x="40" y="158" width="90" height="34" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="85" y="180" text-anchor="middle" font-size="13" fill="#2C2C2A">Process A</text>
+<line x1="85" y1="194" x2="85" y2="224" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="145" y="158" width="90" height="34" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="190" y="180" text-anchor="middle" font-size="13" fill="#2C2C2A">Process B</text>
+<line x1="190" y1="194" x2="190" y2="224" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="250" y="158" width="90" height="34" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="295" y="180" text-anchor="middle" font-size="13" fill="#2C2C2A">Process C</text>
+<line x1="295" y1="194" x2="295" y2="224" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#ah)"/>
+<rect x="40" y="226" width="300" height="74" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="190" y="268" text-anchor="middle" font-size="13" font-weight="700" fill="#185FA5">HBM 대역폭 · L2 · SM 공유</text>
+<text x="40" y="330" text-anchor="start" font-size="12" fill="#5F5E5A">• 이미 HBM 포화라면 동시 실행 이득 제한</text>
+<text x="40" y="352" text-anchor="start" font-size="12" fill="#5F5E5A">• P95/P99 지연 시간 상승 가능</text>
+<rect x="380" y="120" width="320" height="252" rx="6" fill="#F1EFE8" stroke="#B4B2A9" stroke-width="1.2"/>
+<text x="396" y="144" text-anchor="start" font-size="13" font-weight="700" fill="#2C2C2A">MIG · Hardware Partition</text>
+<rect x="396" y="158" width="92" height="142" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="442" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">Instance 0</text>
+<rect x="404" y="190" width="76" height="38" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="442" y="214" text-anchor="middle" font-size="12" font-weight="700" fill="#185FA5">SM</text>
+<rect x="404" y="240" width="76" height="50" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="442" y="261" text-anchor="middle" font-size="12" font-weight="700" fill="#1B6B45">HBM</text>
+<text x="442" y="278" text-anchor="middle" font-size="11" fill="#5F5E5A">slice</text>
+<rect x="492" y="158" width="92" height="142" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="538" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">Instance 1</text>
+<rect x="500" y="190" width="76" height="38" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="538" y="214" text-anchor="middle" font-size="12" font-weight="700" fill="#185FA5">SM</text>
+<rect x="500" y="240" width="76" height="50" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="538" y="261" text-anchor="middle" font-size="12" font-weight="700" fill="#1B6B45">HBM</text>
+<text x="538" y="278" text-anchor="middle" font-size="11" fill="#5F5E5A">slice</text>
+<rect x="588" y="158" width="92" height="142" rx="6" fill="#FFFFFF" stroke="#888780" stroke-width="1.2"/>
+<text x="634" y="178" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">Instance 2</text>
+<rect x="596" y="190" width="76" height="38" rx="6" fill="#DCEBFA" stroke="#378ADD" stroke-width="1.2"/>
+<text x="634" y="214" text-anchor="middle" font-size="12" font-weight="700" fill="#185FA5">SM</text>
+<rect x="596" y="240" width="76" height="50" rx="6" fill="#E3F3EA" stroke="#2E9E6B" stroke-width="1.2"/>
+<text x="634" y="261" text-anchor="middle" font-size="12" font-weight="700" fill="#1B6B45">HBM</text>
+<text x="634" y="278" text-anchor="middle" font-size="11" fill="#5F5E5A">slice</text>
+<text x="396" y="330" text-anchor="start" font-size="12" fill="#5F5E5A">• 인스턴스별 HBM 대역폭 분할</text>
+<text x="396" y="352" text-anchor="start" font-size="12" fill="#5F5E5A">• 서로 다른 GI 간 대역폭 간섭 완화</text>
+<text x="360" y="398" text-anchor="middle" font-size="12" font-weight="700" fill="#2C2C2A">MIG는 GPU 내부 대역폭을 격리하지만, 여러 서비스의 CPU 전처리·PCIe 전송 경쟁은 남는다</text>
+</svg>

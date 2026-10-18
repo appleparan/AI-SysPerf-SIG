@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 350" role="img" font-family="'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13">
+<title>NUMA 데이터 배치: 단일 NUMA와 NUMA별 복제 비교</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#B4B2A9"/></marker><marker id="ahr" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#F08A8A"/></marker><marker id="ahg" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#6FCF97"/></marker></defs>
+<text x="360.0" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="#D3D1C7">NUMA 데이터 배치 · 두 가지 선택</text>
+<text x="360.0" y="48" text-anchor="middle" font-size="12" fill="#B4B2A9">두 GPU 모두 HBM에 적재 · CPU 메모리의 공급 위치만 비교</text>
+<rect x="20" y="64" width="330" height="240" rx="6" fill="#444441" stroke="#6F6E68" stroke-width="1.2"/>
+<text x="185.0" y="88" text-anchor="middle" font-size="13" font-weight="700" fill="#D3D1C7">A  단일 NUMA</text>
+<rect x="35" y="116" width="110" height="54" rx="6" fill="#4A3A22" stroke="#FAC775" stroke-width="1.2"/>
+<text x="90.0" y="140.0" text-anchor="middle" font-size="13" font-weight="700" fill="#FAC775">NUMA 0 DRAM</text>
+<text x="90.0" y="157.0" text-anchor="middle" font-size="11" fill="#B4B2A9">Data</text>
+<rect x="225" y="116" width="110" height="54" rx="6" fill="#1F1E1B" stroke="#6F6E68" stroke-width="1.2"/>
+<text x="280.0" y="140.0" text-anchor="middle" font-size="13" font-weight="700" fill="#888780">NUMA 1 DRAM</text>
+<text x="280.0" y="157.0" text-anchor="middle" font-size="11" fill="#B4B2A9">비어 있음</text>
+<rect x="35" y="226" width="110" height="44" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="90.0" y="253.0" text-anchor="middle" font-size="13" font-weight="700" fill="#85B7EB">GPU 0 · HBM</text>
+<rect x="225" y="226" width="110" height="44" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="280.0" y="253.0" text-anchor="middle" font-size="13" font-weight="700" fill="#85B7EB">GPU 1 · HBM</text>
+<line x1="90" y1="172" x2="90" y2="224" stroke="#B4B2A9" stroke-width="1.4" marker-end="url(#ah)"/>
+<text x="98" y="204" text-anchor="start" font-size="11" fill="#6FCF97">Local</text>
+<line x1="130" y1="172" x2="255" y2="224" stroke="#F08A8A" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+<text x="205" y="196" text-anchor="start" font-size="11" font-weight="700" fill="#F08A8A">Remote</text>
+<text x="185" y="292" text-anchor="middle" font-size="11" fill="#888780">원격 경로 비용 ↔ 복제 비용 없음</text>
+<rect x="370" y="64" width="330" height="240" rx="6" fill="#444441" stroke="#6F6E68" stroke-width="1.2"/>
+<text x="535.0" y="88" text-anchor="middle" font-size="13" font-weight="700" fill="#D3D1C7">B  NUMA별 복제</text>
+<rect x="385" y="116" width="110" height="54" rx="6" fill="#4A3A22" stroke="#FAC775" stroke-width="1.2"/>
+<text x="440.0" y="140.0" text-anchor="middle" font-size="13" font-weight="700" fill="#FAC775">NUMA 0 DRAM</text>
+<text x="440.0" y="157.0" text-anchor="middle" font-size="11" fill="#B4B2A9">Data 복제본</text>
+<rect x="575" y="116" width="110" height="54" rx="6" fill="#4A3A22" stroke="#FAC775" stroke-width="1.2"/>
+<text x="630.0" y="140.0" text-anchor="middle" font-size="13" font-weight="700" fill="#FAC775">NUMA 1 DRAM</text>
+<text x="630.0" y="157.0" text-anchor="middle" font-size="11" fill="#B4B2A9">Data 복제본</text>
+<rect x="385" y="226" width="110" height="44" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="440.0" y="253.0" text-anchor="middle" font-size="13" font-weight="700" fill="#85B7EB">GPU 0 · HBM</text>
+<rect x="575" y="226" width="110" height="44" rx="6" fill="#2A3A4D" stroke="#85B7EB" stroke-width="1.2"/>
+<text x="630.0" y="253.0" text-anchor="middle" font-size="13" font-weight="700" fill="#85B7EB">GPU 1 · HBM</text>
+<line x1="440" y1="172" x2="440" y2="224" stroke="#6FCF97" stroke-width="1.4" marker-end="url(#ahg)"/>
+<line x1="630" y1="172" x2="630" y2="224" stroke="#6FCF97" stroke-width="1.4" marker-end="url(#ahg)"/>
+<text x="535" y="204" text-anchor="middle" font-size="12" font-weight="700" fill="#6FCF97">local ×2</text>
+<line x1="497" y1="150" x2="573" y2="150" stroke="#F08A8A" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#ahr)"/>
+<text x="535" y="140" text-anchor="middle" font-size="11" fill="#B4B2A9">초기 복제</text>
+<text x="535" y="292" text-anchor="middle" font-size="11" fill="#888780">초기 복제 비용 ↔ 로컬 H2D 전송</text>
+<text x="360.0" y="332" text-anchor="middle" font-size="12" fill="#B4B2A9">결정 기준: 복제 비용 · 전송 빈도 · 메모리 용량 · PCIe/NUMA 토폴로지</text>
+</svg>
