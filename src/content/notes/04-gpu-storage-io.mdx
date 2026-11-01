@@ -1,0 +1,215 @@
+---
+title: "Ch. 5 GPU-Based Storage I/O Optimizations"
+week: 4
+presenters: []
+order: 1
+---
+
+# Ch. 5 GPU-Based Storage I/O Optimizations
+
+발표자가 준비한 질문 1개와 사전 질문 3개를 다뤘습니다. 질문 원문은 제출된 그대로 옮겼습니다. 쪽수는 책의 인쇄 쪽 기준입니다. 답은 책 근거와 외부 조사를 나눠 적었고, 책에 없는 내용을 이어 붙인 부분은 "해석"으로 표시했습니다.
+
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| Data Path | Data Stall, Page Cache, Bounce Buffer, H2D | Q1 |
+| Data Imbalance | Straggler, MoE Hot Expert, Sequence Packing | Q2 |
+| DeepSeek 3FS | Read Cache, KV Cache, Traffic Isolation | Q3 |
+| pin_memory와 GDS | Pinned Memory, GPUDirect Storage, DALI | Q4 |
+
+## Data Path
+
+### Q1. 배치 하나가 디스크에서 GPU 연산까지 가는 동안 어디서 멈추나
+
+**데이터가 지나는 다섯 지점 어디서든 data stall이 생길 수 있고, 지점마다 원인과 해법이 다릅니다.** data stall은 GPU가 연산하지 못하고 입력 데이터를 기다리는 상태입니다. GPU 입장에서는 다섯 지점의 지연이 모두 같은 대기로 보입니다. 그래서 책은 GPU 유휴 시간을 데이터 로더 시간, H2D(Host to Device) 복사 시간, 스토리지 I/O 대기로 나눠 보라고 합니다(p.177–178).
+
+| 지점 | 멈추는 이유 | 책의 해법 | 쪽 |
+| --- | --- | --- | --- |
+| 데이터 지역성 | 원격 스토리지는 네트워크 홉이 많아 지연이 크고 총 대역폭이 부족함. NVL72에는 14–20 GB/s 필요 | 랙 로컬 NVMe·NVMe-oF, 노드별 샤딩(100 TB → 10노드 × 10 TB) | 163–164 |
+| 접근 패턴 | 작은 파일 수백만 개는 random seek. 4 KB 읽기는 요청당 오버헤드가 커서 대역폭보다 IOPS에 먼저 막힘 | 샤드 파일(WebDataset, Parquet 등), 1 MB 단위 읽기, 병렬 요청 | 165 |
+| 페이지 캐시 | RAM보다 큰 데이터를 random read하면 캐시 스래싱이 생김 | 순차 스트리밍에는 read-ahead 확대, RAM에 들어가면 사전 적재(preload) | 166–167, 172 |
+| 바운스 버퍼 | SSD → 호스트 메모리 → GPU로 두 번 복사하고, 복사를 CPU가 수행 | GDS: 스토리지가 GPU 메모리로 직접 DMA, CPU는 제어 경로만 담당 | 167–170 |
+| H2D 복사 | pageable 메모리는 드라이버의 스테이징 복사가 추가돼 연산과 겹치지 못함 | pinned 메모리(복사 2–3배 빠름), 별도 복사 스트림, 워커별 prefetch | 70, 179–181, 434 |
+| 측정 | 원인이 섞여 보이면 처방이 엇나감 | 데이터 로더 단독 시간, H2D 복사 시간 측정. synthetic 대비 real 데이터 오버헤드 10% 미만이 목표 | 177–178, 966 |
+
+H2D 복사 지점은 발표자도 이해가 덜 됐다고 했습니다. 짧게 보충합니다. pageable 메모리는 OS가 언제든 다른 곳으로 옮기거나 swap할 수 있는 메모리입니다. GPU의 DMA 엔진은 위치가 바뀔 수 있는 메모리를 직접 읽지 못합니다. 그래서 드라이버가 데이터를 먼저 내부 pinned 버퍼로 복사하고, 그 버퍼에서 GPU로 보냅니다. 이 중간 복사가 동기적으로 일어나서 연산과 겹치지 못합니다. 처음부터 pinned 메모리에 두면 중간 복사가 사라지고 비동기 복사가 가능합니다.
+
+#### 외부 조사: data stall은 흔하고, 스토리지 지연이 클수록 길어진다
+
+| 수치 | 내용 | 출처 |
+| --- | --- | --- |
+| 20% | Google 학습 job 중 연산 시간의 1/3 이상을 입력 파이프라인에 쓴 job의 비율 | tf.data, 2021 |
+| 56% | Meta 추천 모델(RM1)을 학습 노드의 CPU로 전처리했을 때 데이터를 기다린 GPU 사이클 | Meta DSI, 2022 |
+| 약 17배 | 기본 PyTorch DataLoader에서 S3 직접 읽기 대비 로컬 스토리지의 처리량(546 대 32 Mbit/s). S3에서는 GPU idle 95% | Svogor 외, 2022 |
+
+스토리지 종류별 첫 바이트 지연은 AWS 문서 기준으로 S3 Standard가 약 100–200 ms, S3 Express One Zone이 한 자릿수 ms, EFS(Standard)가 읽기 약 1 ms, FSx for Lustre가 1 ms 미만입니다. 모두 AWS가 밝힌 대표값이나 최선값입니다.
+
+stall을 cold와 warm으로 나눠 재는 방법도 있습니다(Data Stalls, 2021).
+
+1. 합성 데이터로 최대 처리 속도를 잽니다.
+2. 메모리에 다 들어가는 데이터로 잽니다. 1과의 차이가 전처리 stall(prep stall)입니다.
+3. 캐시를 비우고 캐시 크기를 제한해 다시 잽니다. 2와의 차이가 fetch stall입니다.
+
+#### 토론: 어느 지점이 실제로 자주 문제가 되나
+
+발표자는 질문이 너무 커서 여러 챕터를 다 뒤져야 했다고 했습니다. 그리고 다섯 지점 가운데 현실에서 잘 일어나지 않는 것과 더 자주 일어나는 것을 참가자들에게 물었습니다. 이 물음에는 모임에서 답이 나오지 않았습니다. 열린 질문으로 남깁니다.
+
+## Data Imbalance
+
+### Q2. 데이터 불균형으로 생기는 straggler에는 어떤 예가 있나
+
+> 특정 GPU가 다른 GPU 작업의 종료를 기다리느라 아이들한 경우는, 데이터 불균형(data imbalance)때문에 발생한다고 책에서 언급되어 있는데(소제목: identify the cause), 이런 경우 데이터 불균형에는 어떤 예가 있을 수 있을까요?
+
+**책이 드는 구체적인 예는 MoE의 hot expert 하나뿐입니다.** 학습 데이터 불균형의 사례는 책에 없습니다. p.186은 원인을 한 문장으로만 언급합니다.
+
+MoE에서 gating이 일부 expert에 토큰을 몰아주면 그 expert가 있는 GPU만 바쁩니다. 모든 expert가 끝나야 다음 단계로 가므로 나머지 GPU는 기다립니다. 책은 이를 straggler effect라고 부릅니다(p.676). 책의 예시에서 hot expert GPU의 사용률은 99%, 나머지 GPU는 60%입니다. GPU 하나가 클러스터 전체의 병목이 됩니다(p.695). 발표자는 이를 멀티코어 CPU에서 한 코어만 일하는 상황에 비유했습니다.
+
+| 시점 | 책의 완화 방법 | 쪽 |
+| --- | --- | --- |
+| 학습 | load-balancing loss, gating noise | 676–677 |
+| 서빙 | capacity factor 1.2–1.5배, hot expert 복제 | 693–694 |
+
+#### 학습에서는 네 가지 불균형이 같은 증상을 만든다 (해석)
+
+책의 메커니즘을 학습에 옮기면 다음 네 가지가 같은 증상을 만듭니다.
+
+| 불균형 | 내용 | 쪽 |
+| --- | --- | --- |
+| 시퀀스 길이 차이 | 배치를 샘플 수로만 나누면 rank마다 토큰 수가 달라 긴 배치를 받은 rank가 늦음. 길이가 섞이면 padding이 최대 50% | 622, 776 |
+| rank 0의 추가 작업 | 통계 집계나 데이터 수집을 rank 0이 맡아 병목이 되는 일이 흔함 | 967, 186 |
+| 배치·샤드 크기 차이 | rank마다 처리량이 다르면 많은 쪽이 늦게 도착함. FSDP는 불균등 배치를 처리함 | 577 |
+| 전처리 비용 차이 | 영상 길이나 해상도가 섞이면 한 rank의 로더만 늦어짐 | 164, 182 |
+
+**데이터가 아닌 원인도 같은 증상을 만듭니다.** 느린 링크, 과부하 노드, 이기종 인스턴스, 열 스로틀링, ECC·NVLink 오류, 주기적 체크포인트가 그 예입니다(p.123, 716, 967). 늦는 rank는 다중 GPU 타임라인, monitored barrier, rank별 trace 정렬(HTA)로 찾습니다(p.123–124, 185, 591). 늦는 rank가 매번 같으면 하드웨어나 역할 문제, 배치마다 바뀌면 데이터 불균형일 가능성이 큽니다(해석).
+
+#### 외부 조사: 운영 클러스터 job의 21.4%가 길이 불균형으로 느려졌다
+
+| 불균형 | 사례 | 출처 |
+| --- | --- | --- |
+| 시퀀스 길이 | ByteDance job 3,079개 중 21.4%가 길이 불균형의 영향을 받았고, 이 job들은 평균 1.34배 느림. straggler 전체 비율은 42.5% | Stragglers What-if, OSDI 2025 |
+| 시퀀스 packing 구성 | 토큰 수가 같아도 attention 연산량은 문서 길이의 제곱에 비례해서, 8K GPU, 128K 컨텍스트 job에서 가장 느린 GPU가 1.44배 오래 걸림 | Meta WLB-LLM, OSDI 2025 |
+| 멀티모달 | 샘플마다 이미지 수와 해상도가 달라 DP rank 사이의 부하가 다름 | DistTrain, OrchMLLM |
+| 전처리 시간 | 샘플별 디코딩·증강 시간 차이로 PyTorch 기본 DataLoader에서 GPU idle 최대 76% | MinatoLoader |
+
+실무의 해법은 크게 세 갈래입니다.
+
+1. **시퀀스 packing**: padding 대신 시퀀스를 이어 붙입니다. 처리량이 최대 약 2배가 되지만, 이득은 길이 분포에 따라 다릅니다(Hugging Face·IBM, 2024).
+2. **길이 그룹 sampler**: 길이가 비슷한 샘플끼리 배치를 묶어 장치 간 padding 비용을 맞춥니다(HF Trainer).
+3. **rank 간 시퀀스 재분배**: 그래도 남는 차이는 rank 사이에서 시퀀스를 옮겨 맞춥니다. Stragglers What-if 논문은 대표 job 하나에 재분배를 시험해 처리량이 23.9% 늘었다고 보고했습니다. 대규모로 배포한 결과는 아닙니다. WLB-LLM은 문서 단위 샤딩으로 평균 1.23배 빨라졌습니다.
+
+BERT 사전학습에 쓰는 Wikipedia 데이터는 길이 512 기준으로 padding이 전체 토큰의 50%였습니다(Graphcore, Krell 외 2021). 책의 "padding 최대 50%"와 같은 수치입니다.
+
+## DeepSeek 3FS
+
+### Q3. DeepSeek는 학습 읽기와 KV cache 관리의 균형을 어떻게 맞추나
+
+> Deepseek의 경우 책에 나온것처럼 캐시가 의미없는건 맞긴한데, 훈련에 사용하는 워크로드 (많은 데이터를 한번에 읽어오는것)과 KV Cache관리 (랜덤 액세스)가 다른 워크로드라 균형을 맞추기 힘들 것 같은데 어떻게 밸런스를 맞추는걸까요
+
+책의 해당 대목은 이렇습니다. DeepSeek이 직접 만든 분산 파일 시스템 3FS는 AI 워크로드가 대량의 random read를 한다고 봅니다. 그래서 읽기 캐시가 학습과 추론 모두에 효과가 없다고 판단하고 캐시를 없앴습니다(p.6–7, 172).
+
+**두 캐시는 계층이 다릅니다 (해석).** 3FS가 없앤 것은 파일 시스템의 읽기 캐시입니다. KV cache는 서빙 엔진이 재계산을 피하려고 두는 계산 결과입니다. GPU에 다 들어가지 않는 KV는 CPU 메모리나 NVMe로 오프로드됩니다. 긴 입력에서는 다시 불러오는 쪽이 재계산보다 TTFT가 최대 14배 짧습니다(p.158, 172, 779).
+
+**책은 학습도 random read로 봅니다.** 셔플된 샘플을 읽기 때문입니다. 두 워크로드가 모두 random read이므로, 캐시 없이 SSD 대역폭을 RDMA로 바로 쓰는 같은 설계가 둘 다에 맞습니다(p.172–173).
+
+**실제 분리 방식은 책에 없습니다.** 단서는 "6.6 TB/s를 내면서 배경 작업에 1.4 TB/s를 동시에 제공했다"는 한 문장뿐입니다(p.174).
+
+#### 외부 조사: DeepSeek는 저장소 트래픽을 네트워크에서 분리했다
+
+| 항목 | 내용 | 출처 |
+| --- | --- | --- |
+| 트래픽 클래스 격리 | 트래픽을 HFReduce, NCCL, 3FS, 기타 네 종류로 나누고, 종류마다 InfiniBand SL(Service Level)을 다르게 주어 VL(Virtual Lane)에 매핑함. VL 사이의 비율을 정해 격리함(구체적인 비율은 공개하지 않음). 3FS는 request-to-send 방식으로 incast 혼잡을 제어 | Fire-Flyer AI-HPC, 2024 |
+| 스토리지 전용 네트워크 | H800 클러스터는 노드마다 별도 스토리지 네트워크에 연결된 400 Gbps NIC로 3FS에 접근함. 추론은 학습 트래픽과 격리해야 한다고 제안 | Insights into DeepSeek-V3, ISCA 2025 |
+| 두 워크로드 모두 random read | 학습 dataloader도 셔플·prefetch 없이 샘플을 random으로 읽음. 6.6 TiB/s는 스토리지 노드 180대에서, 학습 job 트래픽이 흐르는 중에 측정 | 3FS README |
+| 디스크 KV cache 실사용 | 24시간 동안 입력 토큰의 56.3%가 디스크 KV cache에 적중(2025). 재사용이 많은 128K 프롬프트의 첫 토큰이 13초에서 0.5초로 줄어듦(2024, 가장 좋은 경우) | DeepSeek Open Infra Index, API News |
+
+외부 조사로도 확인하지 못한 것이 두 가지 있습니다. 학습 데이터와 KV cache가 같은 3FS 클러스터를 쓰는지, 3FS 안에 두 워크로드 사이의 우선순위 장치가 있는지입니다.
+
+#### 토론: 3FS는 DeepSeek이니까 가능한 설계다
+
+진행자는 3FS를 다른 곳에서 도입하기는 쉽지 않다고 봤습니다. 인프라를 깊이 다루는 인력이 있는 DeepSeek이라서 가능한 설계라는 것입니다. 보통은 KV cache를 메모리에 먼저 두고, 넘치면 SSD로 내립니다. 그 사이에 CXL 메모리 같은 계층도 있습니다. 그래서 3FS까지 가지 않아도 되는 경우가 많습니다. 다만 DeepSeek이 KV cache에 어떤 방식으로 접근하는지는 궁금하다고 했습니다.
+
+## pin_memory와 GDS
+
+### Q4. pin_memory로 충분한가, GDS는 어느 규모부터 검토하나
+
+> PyTorch의 pin_memory 만으로도 LLM 학습에서는 어느정도 최적화가 가능할거 같은데 실제로도 GDS 같은것들을 사용하나요? 이미지에서는 많은 I/O 가 필요할거 같아서 유용할거 같습니다. 혹시 실무에서는 어느정도 규모가 되어야 적용을 검토하는게 좋을까요?
+
+**GDS의 이득은 CPU가 데이터 복사로 포화일 때 커집니다.** GDS(GPUDirect Storage)는 스토리지가 CPU 메모리를 거치지 않고 GPU 메모리로 직접 DMA하는 기술입니다. 사전 토큰화한 텍스트는 CPU가 포화되는 경우가 드물어서 pinned 경로로 충분한 경우가 많습니다(해석). 책에 GPU 수 같은 규모 기준은 없습니다.
+
+| 항목 | pin_memory | GDS |
+| --- | --- | --- |
+| 동작 | pinned → GPU 복사가 pageable보다 2–3배 빠름(p.70) | 스토리지가 GPU 메모리로 직접 DMA하고, CPU는 제어 경로만 맡음(p.167–168) |
+| 효과 | 켜기만 해도 최대 10–20% 개선된 사례가 많음(p.71) | CPU가 여유 있었다면 처리량은 비슷하고 CPU 사용률만 줄어듦(p.170) |
+| 한계·예시 | 줄이는 것은 H2D 한 구간뿐. 디스크 읽기와 CPU 전처리는 그대로 남음(p.167–168) | pinned 경로 대비 8.0 → 9.6 GB/s(+20%) 예시(p.171–172) |
+
+#### 데이터 종류에 따라 병목의 자리가 다르다
+
+| 항목 | 텍스트 LLM | 이미지·영상 |
+| --- | --- | --- |
+| 규모 | TB 단위 텍스트 | PB 단위 이미지 |
+| 저장 형식 | 사전 토큰화한 `.bin`/`.idx` | JPEG 등 압축 원본, 샤드 파일 |
+| 주된 CPU 비용 | 토큰화(오프라인 처리 가능) | 디코딩·증강 |
+| 먼저 쓸 도구 | 오프라인 전처리 + pin_memory DataLoader | DALI·nvJPEG로 디코딩을 GPU로 옮김 |
+| 근거 | p.163, 183–184 | p.163, 165, 176, 182 |
+
+책은 이미지 학습에서도 GDS보다 디코딩을 GPU로 옮기는 것을 먼저 권합니다. GDS가 이득이 되는 조건은 다섯 가지입니다.
+
+1. 필요 대역폭이 큽니다. 노드당 1.6 GB/s면 100노드에 160 GB/s입니다(p.963).
+2. GPU 대기가 H2D 복사와 memcpy에서 생깁니다(p.177–178).
+3. CPU가 복사와 디코딩으로 포화 상태입니다(p.170).
+4. 스토리지 스택(파일 시스템, 드라이버)이 GDS를 지원합니다. FUSE는 지원하지 않습니다(p.168, 173).
+5. `gdsio`로 전송 경로를 비교했을 때 실제로 차이가 납니다(p.171).
+
+#### 외부 조사: GDS 사례는 큰 순차 I/O에 몰려 있다
+
+| 사례 | 결과 | GDS 기여도 | 출처 |
+| --- | --- | --- | --- |
+| 체크포인트 저장 | Gen5 NVMe 8개로 `torch.save` 대비 20배 이상 | GDS 없이도 비슷한 개선 | DeepSpeed DeepNVMe, 2025 |
+| 가중치 로딩 | 4.8–7.5배 | 작음. NUMA 노드를 넘으면 오히려 느림 | IBM fastsafetensors, 2025 |
+| 병리 이미지 | 병렬 읽기 4.2배, GDS로 11.8배 | 큼(데모) | NVIDIA cuCIM, 2023 |
+| 텍스트 대 이미지 | 실험 환경에서 언어 모델(BERT-Large, GNMT)은 data stall 없음. 이미지·오디오 모델은 GPU당 CPU 3–24코어 필요 | — | Data Stalls, 2021 |
+
+NVIDIA 문서가 말하는 조건은 이렇습니다. GDS는 작은 random 접근보다 큰 단위 순차 스트리밍에 맞습니다. 4 KB 정렬이 필요하고, 4–64 KB I/O는 CPU 비용이 큽니다. GDS를 지원하지 않는 파일 시스템에서는 CPU를 거치는 호환 모드(compatibility mode)로 동작합니다. PyTorch에서는 `torch.cuda.gds`(2.7부터, 튜토리얼 기준 prototype), KvikIO, DALI numpy reader로 연결합니다.
+
+GPU 수로 정한 도입 기준은 외부 조사에서도 찾지 못했습니다. 사례들의 공통 기준은 규모보다 I/O 패턴, 즉 I/O 크기와 순차성입니다(해석).
+
+#### 토론: 스토리지는 대개 있는 것을 그냥 쓴다
+
+진행자는 스토리지는 바꾸기 어려워서 보통 있는 것을 그대로 쓴다고 했습니다. 공개 컨퍼런스 발표에서 본 사례도 들었습니다. 데이터를 처음에는 오브젝트 스토리지나 HDFS에 두고, 학습 전에 로컬 NVMe로 복사해서 읽는 방식이었습니다. 발표 측은 이를 나중에 개선하겠다고 했지만, 이후 발표에는 관련 내용이 없었다고 합니다.
+
+진행자가 최근 알게 된 워크로드는 평가(evaluation)입니다. 요즘 소프트웨어 벤치마크는 작은 파일을 계속 빌드하고 한꺼번에 실행합니다. 큰 파일 하나를 읽는 대신 작은 파일을 random으로 많이 읽어서 I/O 부담이 큽니다. 학습 데이터라면 미리 전처리해서 올려 두면 되지만, 평가는 그렇게 할 수 없습니다. 컨테이너가 계속 뜨고 내려가면서 cgroup의 I/O 제어에서 병목이 생기고, 커널 버그와 겹쳐 문제가 커지는 경우가 많다고 했습니다. Q1의 접근 패턴 문제가 학습 밖에서 나타나는 예입니다.
+
+## 정리
+
+| 질문 | 핵심 답 | 외부 조사 결과 |
+| --- | --- | --- |
+| Q1 데이터 경로 | 데이터 지역성, 접근 패턴, 페이지 캐시, 바운스 버퍼, H2D 복사에서 stall이 생기고, GPU 유휴 시간을 나눠 볼 때 원인이 드러남 | Google job 20%가 연산 시간의 1/3 이상을 입력에 씀. S3 직접 읽기는 로컬 스토리지보다 처리량이 약 17배 낮음 |
+| Q2 데이터 불균형 | 책의 구체적인 예는 MoE hot expert. 학습에서는 길이, 작업량, 전처리 비용 차이가 같은 증상을 만듦(해석) | ByteDance job의 21.4%가 길이 불균형의 영향을 받았고 평균 1.34배 느림. packing으로 최대 약 2배 |
+| Q3 DeepSeek 3FS | 없앤 것은 파일 시스템 캐시이고, KV cache는 재계산 대 I/O 비용으로 저장 계층을 정하는 별개의 데이터 | 3FS 트래픽을 IB SL/VL과 전용 NIC로 분리. 디스크 KV cache 적중률 56.3% |
+| Q4 pin_memory·GDS | pin_memory는 H2D를 줄이고, GDS는 CPU가 복사로 포화일 때 이득이 큼 | GDS 사례는 체크포인트, 가중치, 대용량 이미지. GPU 수 기준은 찾지 못함 |
+
+다음 모임부터는 Season 2로 넘어가 Ch. 16에서 추론을 다룹니다.
+
+## 참고 자료
+
+- Chris Fregly, *AI Systems Performance Engineering* (O'Reilly, 2025)
+- Murray et al., [tf.data: A Machine Learning Data Processing Framework](https://www.vldb.org/pvldb/vol14/p2945-klimovic.pdf) (VLDB 2021)
+- Zhao et al., [Understanding Data Storage and Ingestion for Large-Scale Deep Recommendation Model Training](https://arxiv.org/abs/2108.09373) (ISCA 2022)
+- Svogor et al., [Profiling and Improving the PyTorch Dataloader for High-Latency Storage](https://arxiv.org/abs/2211.04908) (2022)
+- Krell et al., [Efficient Sequence Packing without Cross-contamination](https://arxiv.org/abs/2107.02027) (Graphcore, 2021)
+- AWS, [Best practices design patterns: optimizing Amazon S3 performance](https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html)
+- AWS, [S3 Express One Zone](https://aws.amazon.com/s3/storage-classes/express-one-zone/)
+- AWS, [Amazon EFS performance](https://docs.aws.amazon.com/efs/latest/ug/performance.html)
+- AWS, [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/)
+- Mohan et al., [Analyzing and Mitigating Data Stalls in DNN Training](https://arxiv.org/abs/2007.06775) (VLDB 2021)
+- Lin et al., [Understanding Stragglers in Large Model Training Using What-if Analysis](https://arxiv.org/abs/2505.05713) (OSDI 2025)
+- Wang et al., [WLB-LLM: Workload-Balanced 4D Parallelism for Large Language Model Training](https://arxiv.org/abs/2503.17924) (OSDI 2025)
+- [MinatoLoader](https://arxiv.org/abs/2509.10712) (EuroSys 2026)
+- Hugging Face, [Improving Hugging Face Training Efficiency Through Packing with Flash Attention 2](https://huggingface.co/blog/packing-with-FA2)
+- DeepSeek-AI, [Fire-Flyer AI-HPC](https://arxiv.org/abs/2408.14158) (SC 2024)
+- DeepSeek-AI, [Insights into DeepSeek-V3: Scaling Challenges and Reflections on Hardware for AI Architectures](https://arxiv.org/abs/2505.09343) (ISCA 2025)
+- DeepSeek, [3FS (Fire-Flyer File System)](https://github.com/deepseek-ai/3FS)
+- DeepSeek, [Open Infra Index: DeepSeek-V3/R1 Inference System Overview](https://github.com/deepseek-ai/open-infra-index/blob/main/202502OpenSourceWeek/day_6_one_more_thing_deepseekV3R1_inference_system_overview.md)
+- DeepSeek, [API News: Context Caching on Disk](https://api-docs.deepseek.com/news/news0802)
+- PyTorch, [DeepNVMe: Affordable I/O Scaling for Deep Learning Applications](https://pytorch.org/blog/deepnvme-affordable-i-o-scaling-for-deep-learning-applications/)
+- IBM Research, [fastsafetensors](https://arxiv.org/abs/2505.23072) (IEEE CLOUD 2025)
+- PyTorch, [Accelerating IO with GPUDirect Storage](https://docs.pytorch.org/tutorials/prototype/gpu_direct_storage.html)
