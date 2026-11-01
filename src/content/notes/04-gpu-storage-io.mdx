@@ -39,9 +39,9 @@ H2D 복사 지점은 발표자도 이해가 덜 됐다고 했습니다. 짧게 �
 | --- | --- | --- |
 | 20% | Google 학습 job 중 연산 시간의 1/3 이상을 입력 파이프라인에 쓴 job의 비율 | tf.data, 2021 |
 | 56% | Meta 추천 모델(RM1)을 학습 노드의 CPU로 전처리했을 때 데이터를 기다린 GPU 사이클 | Meta DSI, 2022 |
-| 약 17배 | S3 직접 읽기 대비 로컬 SSD의 처리량. S3에서는 GPU idle 95% | 기술 보고서, 2022 |
+| 약 17배 | 기본 PyTorch DataLoader에서 S3 직접 읽기 대비 로컬 스토리지의 처리량(546 대 32 Mbit/s). S3에서는 GPU idle 95% | Svogor 외, 2022 |
 
-스토리지 종류별 첫 바이트 지연은 AWS 문서 기준으로 S3 Standard가 수십 ms, S3 Express One Zone이 한 자릿수 ms, EFS가 읽기 약 1 ms, FSx for Lustre(SSD)가 1 ms 미만입니다.
+스토리지 종류별 첫 바이트 지연은 AWS 문서 기준으로 S3 Standard가 약 100–200 ms, S3 Express One Zone이 한 자릿수 ms, EFS(Standard)가 읽기 약 1 ms, FSx for Lustre가 1 ms 미만입니다. 모두 AWS가 밝힌 대표값이나 최선값입니다.
 
 stall을 cold와 warm으로 나눠 재는 방법도 있습니다(Data Stalls, 2021).
 
@@ -96,7 +96,7 @@ MoE에서 gating이 일부 expert에 토큰을 몰아주면 그 expert가 있는
 2. **길이 그룹 sampler**: 길이가 비슷한 샘플끼리 배치를 묶어 장치 간 padding 비용을 맞춥니다(HF Trainer).
 3. **rank 간 시퀀스 재분배**: 그래도 남는 차이는 rank 사이에서 시퀀스를 옮겨 맞춥니다. Stragglers What-if 논문은 대표 job 하나에 재분배를 시험해 처리량이 23.9% 늘었다고 보고했습니다. 대규모로 배포한 결과는 아닙니다. WLB-LLM은 문서 단위 샤딩으로 평균 1.23배 빨라졌습니다.
 
-BERT 사전학습 데이터는 길이 512 기준으로 padding이 전체 토큰의 50%였습니다(Graphcore, 2021). 책의 "padding 최대 50%"와 같은 수치입니다.
+BERT 사전학습에 쓰는 Wikipedia 데이터는 길이 512 기준으로 padding이 전체 토큰의 50%였습니다(Graphcore, Krell 외 2021). 책의 "padding 최대 50%"와 같은 수치입니다.
 
 ## DeepSeek 3FS
 
@@ -116,7 +116,7 @@ BERT 사전학습 데이터는 길이 512 기준으로 padding이 전체 토큰�
 
 | 항목 | 내용 | 출처 |
 | --- | --- | --- |
-| 트래픽 클래스 격리 | HFReduce, NCCL, 3FS 등 트래픽 종류마다 InfiniBand SL(Service Level)을 다르게 주고 VL(Virtual Lane)에 매핑해 격리함. 3FS는 request-to-send 방식으로 incast 혼잡을 제어 | Fire-Flyer AI-HPC, 2024 |
+| 트래픽 클래스 격리 | 트래픽을 HFReduce, NCCL, 3FS, 기타 네 종류로 나누고, 종류마다 InfiniBand SL(Service Level)을 다르게 주어 VL(Virtual Lane)에 매핑함. VL 사이의 비율을 정해 격리함(구체적인 비율은 공개하지 않음). 3FS는 request-to-send 방식으로 incast 혼잡을 제어 | Fire-Flyer AI-HPC, 2024 |
 | 스토리지 전용 네트워크 | H800 클러스터는 노드마다 별도 스토리지 네트워크에 연결된 400 Gbps NIC로 3FS에 접근함. 추론은 학습 트래픽과 격리해야 한다고 제안 | Insights into DeepSeek-V3, ISCA 2025 |
 | 두 워크로드 모두 random read | 학습 dataloader도 셔플·prefetch 없이 샘플을 random으로 읽음. 6.6 TiB/s는 스토리지 노드 180대에서, 학습 job 트래픽이 흐르는 중에 측정 | 3FS README |
 | 디스크 KV cache 실사용 | 24시간 동안 입력 토큰의 56.3%가 디스크 KV cache에 적중(2025). 재사용이 많은 128K 프롬프트의 첫 토큰이 13초에서 0.5초로 줄어듦(2024, 가장 좋은 경우) | DeepSeek Open Infra Index, API News |
@@ -182,7 +182,7 @@ GPU 수로 정한 도입 기준은 외부 조사에서도 찾지 못했습니다
 
 | 질문 | 핵심 답 | 외부 조사 결과 |
 | --- | --- | --- |
-| Q1 데이터 경로 | 데이터 지역성, 접근 패턴, 페이지 캐시, 바운스 버퍼, H2D 복사에서 stall이 생기고, GPU 유휴 시간을 나눠 볼 때 원인이 드러남 | Google job 20%가 연산 시간의 1/3 이상을 입력에 씀. S3 직접 읽기는 로컬 SSD보다 약 17배 느림 |
+| Q1 데이터 경로 | 데이터 지역성, 접근 패턴, 페이지 캐시, 바운스 버퍼, H2D 복사에서 stall이 생기고, GPU 유휴 시간을 나눠 볼 때 원인이 드러남 | Google job 20%가 연산 시간의 1/3 이상을 입력에 씀. S3 직접 읽기는 로컬 스토리지보다 처리량이 약 17배 낮음 |
 | Q2 데이터 불균형 | 책의 구체적인 예는 MoE hot expert. 학습에서는 길이, 작업량, 전처리 비용 차이가 같은 증상을 만듦(해석) | ByteDance job의 21.4%가 길이 불균형의 영향을 받았고 평균 1.34배 느림. packing으로 최대 약 2배 |
 | Q3 DeepSeek 3FS | 없앤 것은 파일 시스템 캐시이고, KV cache는 재계산 대 I/O 비용으로 저장 계층을 정하는 별개의 데이터 | 3FS 트래픽을 IB SL/VL과 전용 NIC로 분리. 디스크 KV cache 적중률 56.3% |
 | Q4 pin_memory·GDS | pin_memory는 H2D를 줄이고, GDS는 CPU가 복사로 포화일 때 이득이 큼 | GDS 사례는 체크포인트, 가중치, 대용량 이미지. GPU 수 기준은 찾지 못함 |
@@ -194,6 +194,12 @@ GPU 수로 정한 도입 기준은 외부 조사에서도 찾지 못했습니다
 - Chris Fregly, *AI Systems Performance Engineering* (O'Reilly, 2025)
 - Murray et al., [tf.data: A Machine Learning Data Processing Framework](https://www.vldb.org/pvldb/vol14/p2945-klimovic.pdf) (VLDB 2021)
 - Zhao et al., [Understanding Data Storage and Ingestion for Large-Scale Deep Recommendation Model Training](https://arxiv.org/abs/2108.09373) (ISCA 2022)
+- Svogor et al., [Profiling and Improving the PyTorch Dataloader for High-Latency Storage](https://arxiv.org/abs/2211.04908) (2022)
+- Krell et al., [Efficient Sequence Packing without Cross-contamination](https://arxiv.org/abs/2107.02027) (Graphcore, 2021)
+- AWS, [Best practices design patterns: optimizing Amazon S3 performance](https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html)
+- AWS, [S3 Express One Zone](https://aws.amazon.com/s3/storage-classes/express-one-zone/)
+- AWS, [Amazon EFS performance](https://docs.aws.amazon.com/efs/latest/ug/performance.html)
+- AWS, [Amazon FSx for Lustre](https://aws.amazon.com/fsx/lustre/)
 - Mohan et al., [Analyzing and Mitigating Data Stalls in DNN Training](https://arxiv.org/abs/2007.06775) (VLDB 2021)
 - Lin et al., [Understanding Stragglers in Large Model Training Using What-if Analysis](https://arxiv.org/abs/2505.05713) (OSDI 2025)
 - Wang et al., [WLB-LLM: Workload-Balanced 4D Parallelism for Large Language Model Training](https://arxiv.org/abs/2503.17924) (OSDI 2025)
