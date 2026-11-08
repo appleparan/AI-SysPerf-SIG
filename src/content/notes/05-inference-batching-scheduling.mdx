@@ -1,0 +1,269 @@
+---
+title: "Ch. 16 Profiling, Debugging, and Tuning Inference at Scale (1)"
+week: 5
+presenters: []
+order: 1
+---
+
+# Ch. 16 Profiling, Debugging, and Tuning Inference at Scale (1)
+
+Ch. 16 전반부는 LLM 추론에서 배치를 어떻게 묶고, 다음 iteration에 무엇을 넣고, 요청을 어느 워커로 보낼지를 다룹니다. 발표자는 이 세 결정을 batching, scheduling, routing으로 나눠 정리했고, 사전 질문 3개에 답했습니다. 발표 뒤에는 실제 서빙 현장의 이야기로 토론이 이어졌습니다.
+
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| 기본 개념 | Prefill/Decode, TTFT·ITL·TPOT, 디버깅 도구 | |
+| Batching | Dynamic batching, 연산 집약도, Continuous batching | Q1 |
+| Scheduling·Routing | Continuous scheduling, Chunked prefill, Stall-free, Dynamic routing | Q2 |
+| Prefix Cache | 바쁜 파드, KV 전송 대 재계산 | Q3 |
+| 토론 | 노드 내 PD 분리, vLLM·SGLang·llm-d, GPU 장애 대응 | |
+
+## 기본 개념
+
+### Prefill과 Decode는 병목이 다르다
+
+**Prefill은 연산 병목이, 작은 배치의 Decode는 메모리 대역폭 병목이 나타나기 쉽습니다.** Prefill은 프롬프트 전체(또는 chunk)를 한 번에 처리하며 각 레이어의 KV Cache를 만듭니다. 처리할 토큰이 많으면 큰 행렬 연산이 됩니다. Decode는 iteration마다 요청당 1토큰을 만듭니다. 연산량에 비해 가중치와 KV Cache를 읽는 양이 큽니다.
+
+| 지표 | 의미 |
+| --- | --- |
+| TTFT (Time To First Token) | 첫 토큰까지의 시간. 큐 대기와 prefill을 포함 |
+| ITL (Inter-Token Latency) | 연속한 두 토큰이 도착하는 간격 |
+| TPOT (Time Per Output Token) | 첫 토큰 이후 토큰 하나당 평균 생성 시간 |
+
+### Batch, Iteration, Scheduling, Routing은 서로 다른 단위다
+
+**Batch는 함께 실행할 작업의 묶음이고, iteration은 그 묶음을 한 번 실행하는 단계입니다.** iteration 한 번이 끝나도 요청이 끝난 것은 아닙니다. 다음 토큰을 만들려면 다음 iteration이 필요합니다. 묶음의 구성이 매번 달라지므로 iteration은 고정 길이의 타임 슬롯도 아닙니다.
+
+| 용어 | 의미 | 예시 |
+| --- | --- | --- |
+| Batch | 함께 실행할 입력 작업의 묶음 | A decode 1 + B decode 1 + C prefill 128 |
+| Iteration | 그 배치를 실행하는 한 단계 | 구성에 따라 실행 시간이 달라짐 |
+| Scheduling | 다음 iteration에 넣을 작업과 순서를 정함 | 다음 iteration에 어떤 요청을 넣을까? |
+| Routing | 요청을 처리할 워커를 정함 | 어느 워커의 큐로 보낼까? |
+
+### 도구마다 답하는 질문이 다르다
+
+| 도구 | 분석 대상 | 확인할 질문 |
+| --- | --- | --- |
+| DCGM + Prometheus + Grafana | GPU·메모리·전력, 서비스 지표 | 언제, 어느 워커에서 지연이 늘었나? |
+| Nsight Systems + NVTX | CPU·GPU·copy·통신 타임라인 | GPU 공백과 동기화·통신 대기는 어디인가? |
+| Nsight Compute | 선택한 GPU 커널의 하드웨어 지표 | HBM/L2 트래픽, 연산 처리량, stall은? |
+| Compute Sanitizer | 장치 메모리 접근·동기화 오류 | 잘못된 접근이나 shared-memory race인가? |
+| NCCL 로그·tests | collective 통신과 연결 상태 | 통신 지연·실패·토폴로지 문제가 있는가? |
+
+## Batching
+
+### Dynamic batching은 도착 상황에 따라 배치 크기를 바꾼다
+
+**Dynamic batching은 정해진 대기 시간 안에 모인 요청만큼 묶어서 실행합니다.** 정책이 "최대 8요청, 최대 2 ms 대기"라면 다음과 같이 동작합니다.
+
+| 도착 상황 | 배치 구성·실행 |
+| --- | --- |
+| 2 ms 전에 8요청이 들어옴 | 8요청 배치를 바로 실행 |
+| 2 ms까지 3요청만 들어옴 | 3요청 배치를 실행하고 다음 요청을 모음 |
+
+"dynamic"은 긴 요청에 긴 타임 슬롯을 준다는 뜻이 아닙니다. 도착 상황과 대기 정책에 따라 배치 구성이 달라진다는 뜻입니다. 여러 요청을 묶으면 같은 가중치를 재사용하고, 커널 실행 시작 비용을 여러 요청이 나눠 냅니다. 목표는 허용 가능한 지연 안에서 처리량을 높이는 것입니다.
+
+### 배치를 키우면 같은 가중치로 더 많이 계산한다
+
+**배치 크기가 커지면 가중치 읽기량은 그대로이고 연산량만 늘어서 연산 집약도가 올라갑니다.** 선형 연산 $Y = XW$에서 $X$는 $B \times K$, $W$는 $K \times N$입니다. $B$는 이번 연산에 들어오는 토큰 행 수입니다. Decode에서는 보통 활성 요청 수와 같고, Prefill에서는 요청 하나가 여러 행을 만듭니다.
+
+출력 원소 $B \times N$개는 각각 길이 $K$의 내적이고, 곱셈과 덧셈을 하나씩 셉니다. BF16 가중치는 값 하나에 2바이트입니다.
+
+| 가중치 로드가 지배적이라고 가정 | $B=1$ | $B=8$ |
+| --- | --- | --- |
+| 연산량 | $2KN$ FLOPs | $16KN$ FLOPs |
+| 가중치 읽기량 | 약 $2KN$ bytes | 약 $2KN$ bytes |
+| 연산 집약도 (FLOPs / HBM bytes) | 약 1 FLOP/byte | 약 8 FLOP/byte |
+
+핵심은 메모리를 더 많이 읽어서 빨라지는 것이 아니라, 한 번 읽은 가중치로 더 많이 계산한다는 것입니다.
+
+### Continuous batching은 iteration마다 배치 구성을 다시 짠다
+
+**Continuous batching은 iteration 경계에서 끝난 요청을 빼고 대기 중인 요청을 넣습니다.** A와 B를 한 배치로 돌리다가 A가 먼저 끝났다고 가정합니다.
+
+| Iteration | 고정 구성의 배치 | Continuous batching |
+| --- | --- | --- |
+| $t_1$ | A decode + B decode | A decode + B decode |
+| $t_2$ (A 종료) | A decode + B decode | A decode + B decode |
+| $t_3$ | B decode, A 자리는 비어 있음 | B decode + C prefill (또는 chunk) |
+| $t_4$ 이후 | B가 끝난 뒤 다음 배치를 받음 | C prefill 완료 후 C decode 참여 |
+
+새로 들어온 C는 prefill부터 해야 하므로, B의 decode와 C의 prefill(또는 chunk)이 한 iteration에 섞입니다. 엔진은 요청마다 KV Cache와 진행 위치를 유지하고, iteration마다 입력 묶음을 다시 구성합니다.
+
+### Q1. Continuous batching은 무엇이며 어떻게 동작하나
+
+> 이 장에서 언급하는 continuous batching은 무엇이며, 어떻게 동작하나요?
+
+**먼저 끝난 요청의 자리에 새 요청을 바로 넣어서, 배치가 가장 긴 요청에 묶이지 않게 합니다.** 발표자는 요청 S1–S6가 wall-clock 시간축 위에서 처리되는 그림으로 설명했습니다. S3가 끝나면 그 자리에 S5가 들어오고, S1이 끝나면 S6가 들어옵니다. 그동안 다른 요청은 생성을 계속합니다.
+
+Continuous batching이 없으면 배치 전체가 가장 오래 걸리는 S2의 wall-clock 시간에 묶입니다. S5와 S6는 S2가 끝날 때까지 시작하지 못합니다.
+
+## Scheduling·Routing
+
+### Continuous scheduling은 독립된 decode 작업을 겹쳐 실행한다
+
+**작은 모델이나 작은 배치의 decode는 GPU를 다 쓰지 못하므로, 여러 요청의 decode 작업을 서로 다른 CUDA stream에 올려 겹칩니다.** 지연 제한 때문에 배치를 작게 잡으면 decode 작업 하나가 GPU 자원을 다 채우지 못합니다. 이때 A가 실행되는 동안 B를 준비해 제출하고, 자원이 남으면 둘을 동시에 실행합니다.
+
+| 요청 | 1단계 | 2단계 | 3단계 |
+| --- | --- | --- | --- |
+| 요청 A | A decode 실행 | A decode 실행 | 완료 |
+| 요청 B | 작업 준비·제출 | B decode 실행 | B decode 계속 |
+
+두 기법은 보는 관점이 다릅니다. Continuous batching은 iteration의 작업 묶음을 갱신하는 관점입니다. Continuous scheduling은 독립된 작업을 실제로 겹쳐 실행하는 관점입니다.
+
+### Chunked prefill은 분할 기법이고, stall-free scheduling은 실행 정책이다
+
+**긴 프롬프트의 prefill을 한 번에 돌리면 진행 중인 decode가 멈추므로, prefill을 chunk로 나눠 decode와 섞습니다.**
+
+| 정책 | 긴 프롬프트 P가 도착했을 때 |
+| --- | --- |
+| Prefill 우선 | P의 prefill 전체를 처리하는 동안 기존 decode가 오래 대기 |
+| Chunked prefill | iteration마다 기존 decode + P의 일부 토큰을 처리 |
+| Stall-free scheduling | 진행 중인 decode, 진행 중인 prefill chunk, 새 prefill 순으로 남은 토큰 예산 안에서 배치 |
+
+Chunked prefill은 프롬프트를 독립된 문장으로 자르는 것이 아닙니다. 앞쪽 chunk가 만든 KV Cache를 유지하고, 뒤쪽 chunk가 그 KV를 참조합니다. 같은 dense causal attention을 계산하면 유효한 QK 쌍의 총수는 분할 전후가 같습니다. 달라지는 것은 작업을 배치하는 크기와 시점입니다.
+
+**chunk 크기는 지표 사이의 trade-off입니다.** chunk를 작게 하면 ITL을 관리하기 쉽습니다. 대신 prefill 완료가 늦어져 TTFT가 길어지고, iteration이 늘어나는 만큼 이전 KV를 다시 읽는 비용과 커널 실행 비용이 늘 수 있습니다.
+
+### Latency-aware routing은 요청 수가 아니라 작업량을 맞춘다
+
+**요청 수가 같아도 작업량이 다르므로, 긴 요청이 한 GPU에 몰리지 않게 나눕니다.** 책의 2-GPU 예시입니다.
+
+| 분배 방식 | GPU 1의 프롬프트 | GPU 2의 프롬프트 |
+| --- | --- | --- |
+| 도착 순서대로 3개씩 | 6K, 2K, 6K (합 14K) | 2K, 2K, 2K (합 6K) |
+| 작업량을 고려해 분산 | 2K, 2K, 6K (합 10K) | 2K, 2K, 6K (합 10K) |
+
+전체 입력량은 20K로 같지만, 가장 바쁜 GPU의 부하가 14K에서 10K로 줄어듭니다. Scheduling은 처리 순서와 배치 구성을, routing은 실행할 GPU나 워커를 정합니다.
+
+### Q2. 여러 스케줄링·라우팅 기법을 실제로 어떻게 함께 쓰나
+
+> Latency-aware scheduling과 dynamic routing은 어떻게 동작하나요? Continuous scheduling과 chunked prefill을 결합하는 것처럼, 여러 스케줄링·라우팅 기법을 실제로 어떻게 함께 사용하나요?
+
+**기법들은 결정하는 수준이 달라서 경쟁하지 않고 층층이 쌓입니다.** 발표자는 결정을 세 수준으로 나눴습니다.
+
+| 결정 수준 | 함께 적용하는 기법 | 결과에 영향을 주는 것 |
+| --- | --- | --- |
+| 클러스터: 실행 위치 | Dynamic routing. 캐시 재사용과 부하로 워커 선택 | 큐와 KV 상태가 라우팅 비용을 바꿈 |
+| 워커: iteration 구성 | Continuous batching + chunked prefill, stall-free 정책으로 decode와 chunk 배치 | chunk 정책에 따라 TTFT와 ITL이 바뀜 |
+| 런타임: 실행 중첩 | Continuous scheduling, 통신과 계산의 overlap | 작업 간 의존성과 자원 경합이 실제 실행 시간을 정함 |
+
+여기서 라우팅 비용은 요청을 그 워커에 보냈을 때의 처리 부담을 추정한 값입니다. 한 iteration에 prefill을 많이 넣으면 새 요청의 첫 토큰은 빨라지지만 기존 요청의 ITL은 길어집니다. 엔진은 실행 시간, 큐, KV 상태를 관측해서 다음 라우팅과 배치 결정을 갱신합니다.
+
+긴 프롬프트 P 하나가 들어왔을 때의 흐름은 다음과 같습니다.
+
+| 순서 | 결정 | 연결되는 기법 |
+| --- | --- | --- |
+| 1 | 부하와 prefix KV 상태로 워커 선택 | Latency-aware / dynamic routing |
+| 2 | 큐에서 처리할 요청과 허용 대기 결정 | Dynamic batching 정책 (선택) |
+| 3 | 끝난 요청을 빼고 새 작업을 받을지 판단 | Continuous batching |
+| 4 | 기존 A·B decode를 먼저 넣고 남은 예산에 P의 prefill chunk 배치 | Stall-free scheduling + token budget |
+| 5 | 커널 실행과 독립된 copy·host 작업을 겹침 | Execution overlap |
+
+P를 한 번에 다 처리하지 못하면 다음 iteration에서 나머지를 이어 갑니다. A가 끝나면 A를 빼고, 예산이 허용하면 큐의 다른 요청을 받습니다. 엔진에 따라 이 결정들은 스케줄러 하나에 통합되어 있습니다.
+
+## Prefix Cache
+
+### Q3. 캐시가 있는 파드가 바쁘면 어떻게 하나
+
+> 여러 파드·서버에서 prefix cache를 어떻게 관리하는 것이 효율적인가요? 같은 prefix를 사용하는 요청이 다시 들어왔는데, 캐시가 있는 1번 파드가 바쁘다면 어떻게 처리해야 하나요?
+
+**캐시가 있다는 이점과 그 파드에서 기다리는 비용을 함께 봐야 하고, 선택지는 세 가지입니다.** 같은 모델, 호환되는 KV 형식, 동일한 토큰 prefix를 재사용할 수 있다고 가정합니다.
+
+| 선택 | 실행 | 비교할 비용 |
+| --- | --- | --- |
+| 1번에서 기다리기 | 로컬 prefix KV를 재사용 | 1번 파드의 실행 대기 + 남은 prefill |
+| 2번에서 재계산 | prefix를 포함한 입력 전체를 다시 계산 | 2번 파드의 실행 대기 + 전체 prefill |
+| 2번으로 KV 가져오기 | 원격 KV를 로딩한 뒤 남은 prefill | 2번 파드의 실행 대기 + 전송·로딩 + 남은 prefill |
+
+1번의 대기가 아주 길면 재계산이 더 빠를 수도 있습니다. KV 전송 비용이 재계산 비용보다 작으면 KV를 가져오는 쪽이 유리합니다. 다만 실행 위치를 정하는 라우터와 KV를 옮기는 기능은 따로 있어야 합니다.
+
+발표자의 답은 시스템이 구성된 토폴로지에 따라 동적으로 정하면 된다는 것이었습니다. 실제 운영 경험에서 나온 답은 아니라서 참가자들의 의견을 구했습니다.
+
+#### 계산 예시: KV 전송 대 재계산
+
+**설명용 계산으로는 400 Gb/s 전송이 가장 빠르고, 25 Gb/s 전송이 가장 느렸습니다.** 실측값이 아니라 어떤 비용을 비교하는지 보여 주는 예시입니다. 가정은 Llama 3.1 70B, 10,000토큰 prefix, BF16 KV입니다. Llama 3.1 70B는 레이어 80개, KV head 8개, head 차원 128입니다.
+
+$$
+\text{KV/token} = 2 \times 80 \times 8 \times 128 \times 2\ \text{bytes} = 320\ \text{KiB}
+$$
+
+10,000토큰이면 모델 전체 KV 합계가 3.2768 GB입니다.
+
+| 비교 대상 | 계산 가정 | 시간 |
+| --- | --- | --- |
+| 400 Gb/s 전송 | 3.2768 GB ÷ 50 GB/s | 약 65.5 ms |
+| 25 Gb/s 전송 | 3.2768 GB ÷ 3.125 GB/s | 약 1.05 s |
+| 8× H100 SXM 재계산 | $2PN \approx 1.4$ PFLOP, dense peak의 40% 가정 | 약 442 ms |
+
+전송은 모델 전체의 집계 대역폭을 가정했고, 프로토콜·HBM 복사·대기 시간은 뺐습니다. 재계산은 attention과 통신 같은 추가 비용을 뺐습니다. 실제 판단은 대기를 포함한 TTFT로 해야 합니다. 이 가정에서는 400 Gb/s 전송 < 재계산 < 25 Gb/s 전송 순입니다.
+
+진행자는 400 Gb/s를 NVLink로, 25 Gb/s를 PCIe 기반으로 보면 된다고 했습니다. 단위를 맞춰 보면 둘 다 네트워크 링크에 더 가깝습니다. 400 Gb/s(50 GB/s)는 InfiniBand NDR이나 400GbE NIC 한 포트 수준이고, 25 Gb/s는 25GbE 수준입니다. H100의 NVLink는 GPU당 900 GB/s, PCIe Gen5 x16은 방향당 약 64 GB/s입니다.
+
+## 토론
+
+### 한 노드 안에서도 Prefill과 Decode를 나눈다
+
+**진행자는 요즘 노드 하나 안에서도 Prefill과 Decode를 분리(disaggregation)하는 경우가 많다고 했습니다.** chunked prefill을 아무리 잘게 나눠도 chunk가 decode 사이에 계속 끼면서 decode가 느려지는 경우가 많기 때문입니다. 너무 잘게 나눠도, 너무 크게 나눠도 문제라서 판단이 애매합니다. 그래서 아예 prefill은 prefill GPU로, decode는 decode GPU로 보냅니다. 진행자는 GPU 8장이면 3분의 2 정도를 prefill에, 2장 정도를 decode에 두는 경우도 있다고 했습니다.
+
+### 서빙 엔진: vLLM과 SGLang, 그 위의 llm-d
+
+**vLLM과 SGLang은 엔진 하나를 띄우는 층이고, llm-d는 그 위에서 여러 엔진을 묶고 분리하는 층입니다.** 노드 하나에 vLLM 여러 개를 띄울 수 있고, 이를 prefill과 decode로 나누면 llm-d 층이 필요해집니다. 밑의 엔진은 vLLM이든 SGLang이든 조합해서 씁니다. 여기에 LMCache 같은 KV Cache 관리 계층과 오프로딩을 붙입니다.
+
+진행자는 두 엔진을 다음과 같이 비교했습니다. 진행자 개인의 경험에 따른 평가입니다.
+
+| 항목 | vLLM | SGLang |
+| --- | --- | --- |
+| 사용자 수 | 많음. 겪는 이슈가 이미 보고·패치되어 있을 가능성이 높음 | 적음. 이슈를 밟을 확률이 높고 패치가 없을 수 있음 |
+| Prefix 공유 | SGLang보다 느림 | 성능이 더 좋음 |
+| 주 용도 | 일반 서빙 | RL post-training의 rollout처럼 prefix 공유가 많은 작업 |
+| 코드·기능 | 기능이 많고 버그 수정도 많지만 버그도 많음 | 코드가 깔끔하고 완성도가 높지만 기능이 적음 |
+
+진행자는 SGLang이 RL에 좋다는 이야기는 들은 것이라고 했습니다. 중국 모델들이 SGLang을 먼저 지원하는 듯한 인상을 받는다는 참가자 의견도 있었습니다.
+
+#### Continuous batching의 계보
+
+참가자 한 명이 FriendliAI의 연구팀이 continuous batching을 처음 만들었고, 이를 모티브로 vLLM과 SGLang이 나왔다는 이야기를 꺼냈습니다. 진행자는 계보를 이렇게 정리했습니다.
+
+- Orca(OSDI '22)가 iteration-level scheduling, 즉 continuous batching을 처음 제안했습니다. 논문을 쓴 서울대 연구실의 교수가 FriendliAI를 창업했습니다.
+- 여기에 PagedAttention을 더한 것이 vLLM입니다.
+- 여기에 prefix를 radix tree로 공유하는 RadixAttention을 더한 것이 SGLang입니다.
+
+FriendliAI의 엔진은 유료 상용 제품이라 써 본 사람은 없었습니다.
+
+#### Day-0 지원을 그대로 믿으면 안 된다
+
+**진행자는 엔진이 새 모델을 day-0에 지원한다는 말을 그대로 믿지 말라고 했습니다.** day-0 지원은 엔진을 띄우고 요청을 보내면 답이 온다는 수준입니다. 입력이 길어지거나 요청이 많아지면 여러 문제가 생깁니다. vLLM 릴리스 노트에 DeepSeek V4 관련 패치가 계속 올라오는 것도 아직 완벽하지 않다는 뜻이라고 했습니다.
+
+같은 GPU라도 InfiniBand를 쓰는 곳, PCIe만 쓰는 곳 등 환경이 다 달라서 edge case가 많습니다. 진행자는 특히 linear attention과 Mamba 계열 지원이 부족해서 커스텀 패치를 많이 넣어야 한다고 했습니다.
+
+토스는 이 문제 때문에 엔진을 직접 패치해서 씁니다. 발표에서는 GLM 5.3 Flash를 출시 당일에 서빙한 사례를 소개했습니다. 당일에는 speculative decoding이 연결되지 않았고, SGLang과 vLLM으로 disaggregated serving을 하면 코드 버그로 서버가 죽었습니다. 토스는 빠진 코드 몇 줄과 TP 분산 처리 쪽 누락을 직접 패치했고, 약 2주 뒤 같은 패치가 오픈소스에도 들어갔다고 했습니다. 진행자는 자체 fork는 제어하기 좋은 대신, upstream에 새로 들어오는 기능을 계속 따라가야 해서 유지가 쉽지 않다고 덧붙였습니다.
+
+토스 발표는 KV-aware routing도 다룹니다. 캐시 히트만 보고 라우팅하면 한 워커에 부하가 몰려서, 부하에 페널티를 주는 방식으로 분산합니다. Q3의 바쁜 파드 문제와 같은 고민입니다. 순간적인 트래픽 급증은 활성 decode 블록 수, prefill, 큐 대기량 기준의 admission control로 막고, 기준을 넘는 요청은 429로 거절합니다. 지속적인 부하는 prefill과 decode 중 어느 쪽에 부하가 많은지 계산해서 오토스케일링합니다.
+
+출처: [토스는 AI모델을 어떻게 서빙할까 | SlashLive](https://www.youtube.com/watch?v=t_35VpGYgiY)
+
+### 새 모델 구조가 KV Cache 추상화를 흔든다
+
+**기존 엔진은 모든 레이어가 KV Cache를 만든다고 가정했지만, 요즘 모델은 이 가정을 자주 깹니다.** 진행자는 앞쪽 절반 레이어만 KV Cache를 만들고, 뒤쪽 절반 레이어는 새로 만들지 않고 재사용만 하는 구조를 예로 들었습니다. 이런 구조가 들어오면 엔진의 캐시 추상화를 다시 짜야 합니다.
+
+Linear attention은 KV가 아니라 state를 관리해야 해서 더 복잡합니다. Kimi Linear처럼 full attention과 linear attention을 섞는 모델도 있습니다.
+
+진행자는 결국 근본은 하나라고 정리했습니다. 큰 KV Cache를 분산된 환경에서 latency와 throughput을 조절하며 얼마나 빨리 조회하느냐의 문제이고, 이론보다 엔지니어링이라서 백엔드 경험이 있는 사람이 잘한다는 것입니다.
+
+### GPU 장애는 관측하고, 자동으로 빼고, 다시 돌린다
+
+참가자가 GPU 8장 노드에 InfiniBand 트랜시버 8개가 꽂혀 있으면 장애가 자주 나는데, GPU 하나가 비정상일 때 어떻게 대응하느냐고 물었습니다. Ch. 3에서 다룬 Kubernetes 운영 질문의 연장입니다.
+
+**진행자의 답은 관측(observability)을 잘 달고, 장애를 자동으로 감지해서 그 GPU를 빼고 서빙을 조정하는 것 외에는 답이 없다는 것이었습니다.** GPU는 언제든 고장 날 수 있는 물건이라고 전제해야 합니다. DCGM 지표와 XID 에러 로그를 함께 봐야 합니다.
+
+진행자는 국내 사례로 래블업 기술 보고서를 추천했습니다. B200 504장(63노드) 클러스터에서 Solar Open 사전학습을 운영하며 장애를 감지하고 복구한 기록입니다. 보고서의 주요 수치는 다음과 같습니다.
+
+| 분석 | 결과 |
+| --- | --- |
+| 장애 전조 탐지 | XID로 특정된 GPU 장애 10건을 751개 Prometheus 지표로 분석. 모든 장애 유형에 공통으로 지배적인 단일 지표는 없어서 다중 신호 탐지가 필요 |
+| 노드 제외 패턴 | 224회 다중 노드 학습 세션에서 63개 노드 중 상위 3개 노드가 전체 제외의 50% 이상 |
+| 자동 재시도 | 12개 재시도 체인(총 73회 시도)의 성공률 33.3%로 수동 복구 12.5%의 2.7배. 재시도 간격 중앙값 11분 |
+| 체크포인트 I/O | 재시작 로딩의 평균 NFS 읽기 처리량이 스토리지 최대 읽기 대역폭(700 GB/s)의 21.5% |
+
+출처: [Lablup Inc. (2026), 이상 탐지에서 자동 복구까지: 504-GPU LLM 학습의 운영 분석 보고](https://huggingface.co/datasets/lablup/from-detection-to-recovery/blob/main/Lablup_Technical_Report_2026_ko.pdf)
