@@ -1,0 +1,217 @@
+---
+title: "Ch. 16 Profiling, Debugging, and Tuning Inference at Scale (2)"
+week: 6
+presenters: ["appleparan"]
+order: 1
+---
+
+# Ch. 16 Profiling, Debugging, and Tuning Inference at Scale (2)
+
+Ch. 16 후반부 모임은 발표 대신 사전 질문 7개에 답하는 토론으로 진행했습니다. 질문은 KV Cache 정밀도, GPU 모니터링, 컨텍스트 최적화, KV Cache 운영의 네 주제로 묶입니다. 발표자는 실제 LLM 서빙 경험을 기준으로 답했고, 경험이 없는 부분은 없다고 밝혔습니다.
+
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| KV Cache 정밀도 | FP16/BF16·FP8·INT4, 내부 벤치, 워크로드별 지표 | Q1 |
+| GPU 모니터링 | GPU Utilization, SM Active, 단계별 trace | Q2 |
+| 컨텍스트 최적화 | Prefix Caching, Summarization, Prompt Compression | Q3, Q5 |
+| GPU 운영 | 다운클락, 스로틀링, Clock Event Reasons, XID | Q4 |
+| KV Cache 운영 | Offload 대 재계산, LMCache, CacheBlend, Mooncake | Q6, Q7 |
+| 토론 | GPU 장애 판별, Kubernetes | |
+
+## KV Cache 정밀도
+
+### Q1. KV Cache 정밀도는 어떤 기준으로 정하나
+
+> 책에서는 KV 캐시를 낮은 정밀도로 저장하면 메모리를 절약할 수 있지만, 실제 워크로드에서 품질을 검증해야 한다고 설명합니다. 그렇다면 실제 서비스에서는 KV 캐시를 FP16/BF16으로 유지할지, FP8, INT4 같은 낮은 정밀도로 저장할지를 어떤 평가 지표와 허용 가능한 품질 저하 기준으로 결정하나요? 특히 긴 문맥이나 다중 턴 대화에서의 품질 변화와, 메모리 절감과 동시 처리량, 응답 지연의 개선을 어떻게 함께 비교하는지 궁금합니다.
+
+**품질은 서비스 내부 벤치로 BF16 대비 회귀를 확인하고, 지연과 처리량은 모니터링 통계로 따로 비교합니다.** 발표자는 KV Cache 양자화를 직접 써 보지 않았고, 내부 벤치로 검증하기 전에는 BF16을 그대로 쓴다고 했습니다. FP8 KV Cache는 vLLM과 SGLang이 옵션으로 지원하며 널리 쓰입니다.
+
+품질과 추론 성능은 측정 방법이 다릅니다. 추론 성능은 랜덤 토큰으로도 잴 수 있습니다. 품질은 사용자가 정성적으로 평가해야 하고 차이도 미묘합니다. 예를 들어 Claude Opus는 되는 작업이 DeepSeek에서는 안 되고, GPT-6 Astra는 계획을 잘 세워 줘야 잘 동작하는 식입니다. 그래서 정량화하려면 사용자 레이팅이나 자체 벤치마크 셋에 기댈 수밖에 없습니다.
+
+| 축 | 확인할 것 | 방법 |
+| --- | --- | --- |
+| 품질 | BF16 대비 품질 회귀 | 실제 대화·코딩·Tool Calling 평가셋, 태스크 성공률 |
+| 지연 | TTFT, ITL P90/P95, E2E latency | 엔진별 지표와 게이트웨이 지표 모니터링 |
+| 처리 효율 | requests/s, tokens/s, KV 사용량, cache hit rate | 동시성별 지연–처리량 곡선 |
+
+많은 곳이 에이전트 작업 데이터를 미리 모아 두고, 새 모델이 나오면 돌려서 품질을 평가합니다. 발표자는 이런 비교를 반복하려면 평가셋, 자동 실행, 회귀 추적을 갖춘 내부 벤치 플랫폼이 있어야 수작업이 줄어든다고 했습니다. 외부 사례로는 Claude Code의 품질을 매일 측정해 저하 여부를 추적하는 트래커가 있습니다.
+
+출처: [Claude Code Performance Tracker | Marginlab](https://marginlab.ai/trackers/claude-code/)
+
+### 워크로드에 따라 병목과 우선 지표가 다르다
+
+**어떤 지표를 먼저 볼지는 워크로드가 정하고, 코딩 에이전트는 Prefill이 병목이 되기 쉽습니다.** 코딩 작업은 출력이 짧고, 멀티턴으로 진행되며, 기존 코드가 컨텍스트에 계속 쌓입니다. 그래서 발표자는 최근에는 Prefill 병목이 더 많다고 했습니다.
+
+| 상황 | 업무 예시 | 주요 병목 | 우선 지표 |
+| --- | --- | --- | --- |
+| 첫 요청, cache miss | 코드베이스 첫 탐색, 큰 테스트 로그 읽기 | Prefill | TTFT P90 |
+| 높은 동시 요청 | CS 챗봇 피크, 에이전트 다수 병렬 실행 | Prefill / Decode | Throughput, ITL P90/P95 |
+| 긴 응답, reasoning | 코드·테스트 생성, 장문 보고서 | Decode | ITL, E2E latency |
+| 긴 문맥, 다중 턴 | 코딩 에이전트 반복 수정, RAG 세션 | KV 메모리 | Cache hit, KV 사용량, TTFT / ITL |
+
+발표자는 tokens/s가 TTFT까지 섞인 지표라서 해석이 애매하다고 했습니다. 그래서 ITL 분포의 P90을 주로 봅니다. P99는 극단값에 너무 끌려가고, P90이 적당하다는 판단입니다.
+
+**다만 ITL P90만 보면 일부 요청의 끊김이 가려질 수 있으므로, TTFT SLO와 요청별 tail 지표를 함께 둡니다.** ITL 분포는 모든 요청의 토큰 간격을 한데 모읍니다. Prefill이 decode에 끼어들거나 preemption으로 요청이 멈췄다 재개되면, 몇몇 요청에만 긴 공백이 생깁니다. 이 공백은 전체 토큰 수에 비해 적어서 P90 아래로 묻힙니다. 그래서 요청마다 가장 긴 ITL 같은 tail 지표를 따로 집계합니다.
+
+서비스 초기에는 latency 위주로 최적화하다가, 사용자가 늘면 throughput 위주로 옮겨 간다고 했습니다. 목표는 내부 품질 기준과 지연 SLO를 지키는 범위에서 throughput을 올리는 것입니다.
+
+## GPU 모니터링
+
+### Q2. GPU Utilization은 무엇을 판단하는 데 쓰나
+
+> GPU utilization은 커널이 하나라도 돌고 있는 시간의 비율이라 부하가 적어도 100%로 보일 수 있습니다. 그렇다면 GPU가 정말 한계에 왔는지는 처리량과 지연 시간 곡선으로 판단하고, SM 활성도나 메모리 대역폭 지표는 어디서 막히는지 찾는 용도로 쓰는 게 맞을까요? 그리고 GPU utilization은 GPU가 놀고 있거나 장애가 났는지 확인하는 정도로만 쓰는 게 좋을까요?
+
+**질문의 이해가 맞습니다. GPU Utilization은 활동 상태의 proxy이고, 포화 여부는 서비스 지표로, 원인은 하드웨어 지표로 찾습니다.** 커널이 SM을 잠깐 점유만 해도 utilization은 100%로 찍힐 수 있습니다. `nvidia-smi`로 바로 보이니 대략적인 상태를 보는 데는 편하지만, 그 숫자를 신뢰하지는 않습니다. 성능이 낮다고 느껴질 때 더 자세한 지표로 뜯어봅니다.
+
+| 구분 | 지표 | 의미 |
+| --- | --- | --- |
+| GPU 내부 | GPU Util | 커널 실행 활동률에 가까운 proxy |
+| GPU 내부 | SM Active | 활성 warp 시간 비율. 이것만으로 포화를 판단하지 않음 |
+| GPU 내부 | Tensor / Compute | 실제 연산 처리량과 병렬성 |
+| GPU 내부 | HBM / Clock | 실효 대역폭, 클럭, throttling |
+| 서비스 전체 | TTFT / ITL P90 | 사용자가 겪는 지연 |
+| 서비스 전체 | Throughput | requests/s, output tokens/s |
+| 서비스 전체 | Queue / Scheduler | 대기, 배칭, 실행 허용 지연 |
+| 서비스 전체 | Prefix Cache | 적중률과 재Prefill 비용 |
+
+### 서빙의 지연 원인은 GPU 앞단에 더 많다
+
+**서빙에서는 GPU 커널보다 설정 실수와 cache miss가 더 흔한 원인입니다.** 커널 수준의 문제는 vLLM이나 SGLang 개발자가 다루는 영역입니다. 서빙하는 쪽이 겪는 문제라면 그들도 겪고 이미 작업하고 있을 가능성이 높습니다.
+
+요청은 Gateway, KV-aware router, 엔진 스케줄러를 거쳐 GPU에 도착합니다. 예를 들어 GPU 8개 중 3번 GPU에 매핑된 세션은 3번을 계속 써야 VRAM에 남은 KV Cache를 재사용합니다. 라우팅이 어긋나면 다음 순서로 지연이 늘어납니다.
+
+잘못된 워커 선택 → Prefix cache miss → 긴 문맥 재Prefill → TTFT 증가
+
+| 관측 현상 | 먼저 의심할 원인 | 확인할 지표·위치 |
+| --- | --- | --- |
+| GPU Util 높음, SM 낮음 | GPU를 충분히 쓰지 못함 | SM·Tensor active, 커널 |
+| TTFT 증가, cache hit 감소 | 잘못된 라우팅, 재Prefill | Prefix hit, prefill tokens |
+| GPU 여유, TTFT 증가 | Gateway, queue, scheduler | 단계별 trace, 대기 시간 |
+| ITL 증가, HBM 사용 높음 | Decode 대역폭 병목 | HBM 실효 대역폭, batch |
+
+학습이 아니라면 utilization까지 깊게 분석할 일은 드뭅니다. 다만 옵션 문제를 찾는 데는 유용합니다.
+
+> 정정: 발표에서는 "GPU가 노는데 메모리 바운드라면 대역폭이나 통신 문제를 의심한다"고 했지만, 두 상태를 섞어 말한 것입니다. 메모리 바운드는 GPU가 바쁘게 HBM을 기다리는 상태이고, GPU가 노는 공백은 다른 원인을 가리킵니다. 두 신호는 다음과 같이 구분합니다.
+
+| 신호 | 의심할 원인 |
+| --- | --- |
+| Utilization은 높은데 연산 처리량이 낮음 | HBM 대역폭에 묶인 메모리 바운드 |
+| 타임라인에 GPU가 노는 공백이 있음 | 통신, host 쪽 오버헤드, kernel launch |
+
+## 컨텍스트 최적화
+
+### Q3. Summarization과 Prefix Caching 중 무엇이 더 효율적인가
+
+> Summarization, Prefix Cache을 이용해서 최적화 하는 방식은 서로 다른 딜레마가 있는 것으로 이해하고 있습니다. 이제는 에이전트 측면에서 접근을 해야 한다고 생각을 하고 있는데 실제로는 어떤 방식의 효율성이 더 높은지, 토큰 생성량 등 어느방식이 더 유리한지 섞어서 사용(일정 토큰 이상시, 다른 주제로 대화를 진행하는경우 Summarization) 하는게 좋아보이는데 다른 분들은 어떠신가요?
+
+**두 기법은 경쟁하지 않습니다. Prefix Caching은 서빙 운영자가, Summarization은 에이전트 사용자가 쓰는 다른 계층의 최적화입니다.** Prefix Caching은 KV Cache를 재사용해서 중복 계산을 줄입니다. Summarization은 Claude Code나 Codex의 compact처럼 입력 컨텍스트 자체를 줄입니다. 사용자가 harness에 자동 compact 조건을 넣을 수는 있지만, 선택은 사용자의 몫입니다.
+
+| 항목 | Prefix Caching (Serving) | Summarization (Agent) |
+| --- | --- | --- |
+| 목적 | 같은 prefix의 KV 재사용, Prefill 절감 | 오래된 이력 정리, 컨텍스트 축소 |
+| 이점 | 원문 보존, 요약 호출 불필요 | 이후 호출의 입력 길이와 KV 부담 감소 |
+| 한계·비용 | 긴 컨텍스트 자체는 줄지 않음 | 요약 호출 비용, 정보 손실 가능 |
+| 주의 | Cache miss 시 Prefill 재계산 | Prefix가 바뀌어 cache hit 감소 가능 |
+
+컨텍스트가 window를 넘으면 어차피 요약이 필요합니다.
+
+> 정정: 발표에서는 "요즘 모델은 대부분 1M인데 Qwen 3.8은 250K 정도"라고 했지만, Qwen 3.8은 변형마다 다릅니다. 오픈 웨이트 Qwen3.8-27B의 기본 컨텍스트는 262,144토큰이고 YaRN으로 약 1M까지 늘릴 수 있습니다. 호스팅 모델인 Qwen3.8-Max와 Qwen3.8-Flash는 1M입니다.
+
+모델은 일정 범위 이상을 보지 못하므로, 앞부분은 요약해 넣고 나머지를 이어 붙여 context window를 최대한 활용합니다.
+
+출처: [Qwen3.8-27B 모델 카드](https://huggingface.co/Qwen/Qwen3.8-27B), [Qwen3.8-Flash | Alibaba Cloud Model Studio](https://help.aliyun.com/en/model-studio/qwen3-8-flash)
+
+### 세션 하나에는 작업 하나만 둔다
+
+**발표자는 세션 하나에서 여러 주제를 다루지 말라고 권했습니다.** 캐시 효율이 떨어지고, 내용이 꼬여서 모델이 맥락을 잘 이해하지 못합니다. 운영 정책은 세 단계로 정리했습니다.
+
+| 상황 | 정책 | 내용 |
+| --- | --- | --- |
+| 일반적인 다중 턴 | Prefix Caching 기본 | 같은 시스템 프롬프트와 대화 prefix 재사용 |
+| 컨텍스트 과도 증가 | 선택적 compaction | 오래된 Tool 로그와 완료된 단계 정리. 목표·결정·현재 상태는 유지 |
+| 독립된 새 주제 | 새 세션 | 이전 이력은 분리하고, 필요한 설정과 프로젝트 지식만 전달 |
+
+발표자 본인은 작업을 이슈와 PR 단위로 나눕니다. 이슈를 만들고, 커밋 여러 개를 모아 PR 하나로 올리고 닫습니다. 그러면 compact가 거의 필요 없습니다. 이전 기록이 필요하면 앞의 컨텍스트 대신 PR 요약을 보게 합니다. 코딩이 아닌 작업이면 별도 문서를 만들게 합니다. 요즘 에이전트는 `docs` 디렉터리 같은 문서를 스스로 찾아 읽으므로, 문서를 잘 갱신하는 편이 낫습니다.
+
+일정 토큰 수를 넘었다는 이유만으로 매번 요약하지는 않습니다. 요약 비용과 cache miss 비용을 이후 여러 턴에서 아낄 토큰·메모리와 비교합니다. 비교 기준은 누적 Prefill 비용, cache hit, KV 메모리, TTFT, 작업 성공률입니다.
+
+### Q5. Prompt Compression은 Prefix Caching의 효율을 떨어뜨리나
+
+> Prompt Compression이 Prefix Caching의 효율을 떨어뜨릴 수도 있지 않을지. 이미 보낸 컨텍스트가 있을텐데 Compression 했을 때 다시 재계산하는게 더 비싸진 않을지.
+
+**단기적으로는 떨어뜨리지만, window 안에서 작업을 이어 가려면 피할 수 없는 비용입니다.** 압축한 컨텍스트는 완전히 새로운 prefix라서 처음부터 Prefill해야 합니다. 하지만 window를 넘으면 그 내용을 볼 수 없으므로, 손해를 보는 것은 마찬가지입니다.
+
+> 정정: 발표에서는 "Claude Code에서 compaction할 때 느려지는 것은 Prefill을 다시 하기 때문"이라고 했지만, 대기 시간은 대부분 요약문을 생성하는 LLM 호출, 즉 decode에서 나옵니다. 요약 호출의 입력은 기존 대화 그대로라서 prefix cache를 탈 수 있고, 요약 뒤 첫 요청은 짧아진 컨텍스트만 Prefill합니다.
+
+| 관점 | 내용 |
+| --- | --- |
+| 단기 비용 (Prefix Cache) | 기존 prefix 변경으로 cache miss, 추가 Prefill과 TTFT 비용, 압축 자체의 연산 비용 |
+| 중장기 효과 (Context) | 불필요한 이력·Tool 로그 정리, 입력 토큰과 KV 메모리 감소, 무관한 정보로 인한 혼선 완화 |
+
+Window를 넘을 때 압축만이 답은 아닙니다. 오래된 정보를 지우거나, 외부 저장소에서 필요한 정보만 다시 검색해 와도 됩니다. 압축하면서 중요한 정보가 빠질 수 있으니 내부 벤치로 작업 품질도 확인합니다. 판단 기준은 cache hit rate 하나가 아니라 누적 Prefill 비용, KV 사용량, 이후 턴 수, 실제 답변 품질입니다.
+
+## GPU 운영
+
+### Q4. 멀티 GPU 다운클락은 어떻게 추적하나
+
+> 멀티 GPU 환경에서 다운클락이 발생할 경우 원인을 추적하고 효율적으로 해결하는 방법이 궁금합니다.
+
+**발표자는 다운클락을 깊게 분석해 본 경험이 많지 않다고 먼저 밝혔습니다.** LLM 서빙에서는 클럭보다 KV Cache 관리, 스케줄링, 라우팅 문제를 더 자주 겪었습니다. 확인한다면 다음 순서로 보겠다고 했습니다.
+
+1. GPU별 클럭, 온도, 전력 제한을 비교합니다.
+2. `nvidia-smi`나 DCGM의 Clock Event Reasons로 원인을 구분합니다.
+3. 실제 장애가 의심되면 XID와 ECC 오류를 확인합니다.
+
+다운클락, 스로틀링, GPU 장애는 서로 다릅니다. 다운클락은 부하 변화에 따른 정상적인 클럭 조절일 수 있습니다. 스로틀링은 전력이나 온도 한계로 인한 제한이고, 스로틀링이 일어나도 GPU가 바로 고장 나는 것은 아닙니다. 발표자는 다운클락이 대부분 스로틀링 때문이라고 생각했지만, 그렇지 않은 경우가 많다고 들었다고 했습니다.
+
+**아무것도 돌리지 않는데 GPU 온도가 혼자 오르면 장애 직전의 증상일 수 있습니다.** 발표자의 경험으로는 이런 GPU가 며칠 뒤 고장 났습니다. GPU는 일부가 늘 고장 나 있고 언제든 장애가 날 수 있는 장비라고 생각하고 관리하는 편이 좋습니다.
+
+## KV Cache 운영
+
+### Q6. KV Cache는 Offload와 재계산 중 무엇이 효율적인가
+
+> KV Cache를 Offload하는 것과 재계산하는 것 중 무엇이 더 효율적일지.
+
+**긴 컨텍스트를 반복해서 재사용하고 CPU RAM에 여유가 있다면, 발표자는 Offload를 먼저 고려합니다.** 긴 prefix를 매번 다시 Prefill하는 GPU 연산 비용이 큽니다.
+
+> 정정: 발표에서는 "GPU 8개 서버에서는 한 세션의 내용이 8개 GPU에 중복될 수 있어 재계산이 낭비"라고 했지만, 조건이 붙어야 합니다.
+
+같은 세션이 엔진 replica 여러 개에 흩어지면 replica마다 같은 prefix의 KV를 따로 만들어서 메모리와 연산이 중복됩니다. TP로 묶은 GPU끼리는 KV를 head 단위로 나눠 가지므로, KV head 수가 TP 크기보다 작아 head를 복제할 때만 중복됩니다. 이 중복은 offload 대 재계산이 아니라 라우팅으로 줄이는 문제입니다.
+
+A100이나 H100급 대형 서버는 CPU RAM이 TB 단위인 경우가 많습니다. 예전에는 GPU 메모리가 모자라도 CPU RAM은 늘 남았습니다. 요즘은 이 RAM을 KV Cache 저장에 쓸 수 있습니다.
+
+| Offload가 유리한 경우 | 재계산을 고려할 경우 |
+| --- | --- |
+| 긴 prefix의 재Prefill 비용이 큼 | 짧거나 재사용 가능성이 낮은 컨텍스트 |
+| CPU RAM에 실제로 여유가 있음 | CPU–GPU 전송 비용이 큰 환경 |
+| 반복 요청이 KV를 재사용함 | Cache 적중률이 낮거나 관리 부담이 큼 |
+
+손익은 CPU–GPU 전송 대역폭, NUMA 배치, 캐시 적중률에 따라 달라집니다. 실행 중인 요청의 KV를 옮기는 swap·preemption과, 나중에 다시 쓸 prefix cache를 RAM에 보관하는 것은 구분해야 합니다. 비교할 지표는 TTFT, 전송 시간, 재Prefill 횟수, CPU RAM과 GPU 메모리 사용량입니다.
+
+### Q7. LMCache와 CacheBlend를 실무에서 많이 쓰나
+
+> 최근 KV Cache관련한 여러 기술들 (LM Cache, Cache blend)이 많이 나왔는데 실무에서 많이 사용하시는지 궁금합니다.
+
+**발표자는 두 기술을 써 보지 않았고, CPU RAM offload 같은 단순한 방법으로 충분하다고 봅니다.** 발표자의 경험에서는 offload가 대부분 CPU RAM 단계에서 끝났고, 스토리지 계층까지 내려가는 일은 드물었습니다. 세션이 아주 오래 유지되는 사용자가 적어서 그만큼의 메모리 압박이 없었기 때문입니다. CacheBlend는 이 질문에서 처음 접했다고 했습니다. 다른 조직의 도입 현황은 알지 못한다고 밝혔습니다.
+
+> 정정: 발표에서는 "CacheBlend보다 Mooncake를 많이 쓰고, Mooncake는 노드 여러 개에서 무조건 써야 한다"고 했지만, 두 가지가 부정확합니다. CacheBlend와 Mooncake는 같은 종류의 기술이 아니어서 둘 중 하나를 고르는 관계가 아닙니다. Mooncake는 다중 노드용으로 설계했지만 노드 한 대에서도 쓸 수 있습니다.
+
+발표자는 LMCache와 함께 Mooncake도 많이 쓴다고 들었다고 했습니다. 세 기술의 층은 다음과 같습니다.
+
+| 기술 | 역할 |
+| --- | --- |
+| CacheBlend | RAG처럼 prefix가 아닌 KV 조각을 이어 붙여 재사용하는 기법. LMCache 쪽에서 나옴 |
+| LMCache | 엔진 밖에서 KV Cache를 저장·공유하는 계층 |
+| Mooncake | 분산 KV 저장소와 전송 엔진. LMCache나 SGLang HiCache의 백엔드로도 쓰임 |
+
+Mooncake는 여러 노드의 클러스터에서 KV를 공유하고 PD 분리를 하려고 설계했습니다. 이득은 llm-d를 쓸 규모의 다중 노드에서 커집니다. 서빙 규모가 커지고 워커 사이에 캐시를 공유할 일이 늘면 이런 KV Cache 계층을 검토할 만하다는 것이 발표자의 판단입니다.
+
+## 토론
+
+### GPU 장애 판별은 NVIDIA가 주는 정보에 기댈 수밖에 없다
+
+**GPU는 드라이버 아래를 들여다볼 수 없어서, 장애 판별은 NVIDIA가 제공하는 XID 같은 정보를 볼 수밖에 없습니다.** 참가자가 GPU 장애 판별의 어려움을 이야기하자 발표자가 답했습니다. GPU를 나눠 쓰는 것도 드라이버 수준의 MPS나 MIG에 기대야 해서 어렵습니다.
+
+### 추론 서빙은 Kubernetes로 넘어가고 있다
+
+**발표자는 추론 서빙이 거의 다 Kubernetes로 넘어가고 있다고 봅니다.** 엔진을 여러 개 띄우고, 노드도 여러 대 쓰고, 그 앞에 게이트웨이와 observability를 띄우면 파드가 많이 필요합니다. 이 규모는 Docker만으로 관리하기 어렵습니다.
