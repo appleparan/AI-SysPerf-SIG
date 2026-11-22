@@ -1,0 +1,296 @@
+---
+title: "Ch. 15 Multinode Inference, Parallelism, Decoding, and Routing Optimizations"
+week: 7
+presenters: []
+order: 1
+---
+
+# Ch. 15 Multinode Inference, Parallelism, Decoding, and Routing Optimizations
+
+Ch. 15는 모델의 관점에서 추론을 빠르게 하는 방법을 다룹니다. 전반부는 PD 분리와 parallelism, 가운데는 speculative decoding, 후반부는 분산 환경의 MoE 레이어입니다. 발표자는 책이 링크만 건 논문을 따라가며 hybrid parallelism의 GPU 수 계산과 EAGLE-1부터 EAGLE-4까지를 정리했고, 사전 질문 3개에 답했습니다. PD 분리는 Ch. 16에서 다뤘으므로 넘어갔습니다.
+
+| 주제 | 키워드 | 질문 |
+| --- | --- | --- |
+| Parallelism | TP·PP·EP·DP, TED, GPU 수 관계식, 적용 순서 | |
+| Speculative Decoding | 수용 확률, 잔류 분포, 타겟 분포 보존 | |
+| EAGLE | Feature 예측, Draft tree, Training-time test, EAGLE-Harness | Q1, Q2 |
+| MoE Rerouting | Capacity factor, Expert 복제, Adaptive routing | Q3 |
+
+## Parallelism
+
+### Hybrid parallelism은 레이어 종류마다 GPU 수의 곱이 같아야 한다
+
+**책의 그림 15-7은 TED 논문의 그림이고, 핵심은 attention 레이어와 expert 레이어가 같은 GPU 수를 서로 다른 방식으로 나눠 쓴다는 것입니다.** 책은 이 그림을 "4 × 2 × EP hybrid parallel combination"이라고만 설명합니다. 발표자는 어디가 4 × 2인지 이해되지 않아 출처 논문을 따라갔습니다.
+
+TED(Tensor-Expert-Data)는 DeepSpeed 팀이 ICS 2023에 낸 논문입니다. MoE 학습에 tensor, expert, data parallelism 세 가지를 함께 쓰는 방법을 처음 제안했고, DeepSpeed에 통합되었습니다. 학습용으로 나온 구성이 추론에도 그대로 쓰이고 있습니다.
+
+MoE 블록은 attention 레이어, router, expert(FFN) 순서로 이어집니다. Attention 레이어는 TP로 쪼갭니다. Router가 정한 토큰은 all-to-all 통신으로 expert가 있는 GPU로 가고, expert 안에서 다시 TP가 일어난 뒤 all-to-all로 돌아옵니다.
+
+논문의 관계식은 다음과 같습니다. $G$는 전체 GPU 수입니다.
+
+$$
+G_{\text{tensor}} \times G_{\text{data}}^{\text{nonexp}} = G_{\text{tensor}} \times G_{\text{expert}} \times G_{\text{data}}^{\text{exp}} = G
+$$
+
+GPU 4개, expert 2개인 논문의 예시는 다음과 같이 읽습니다.
+
+| 레이어 | 식 | 의미 |
+| --- | --- | --- |
+| Attention (non-expert) | $2 \times 2 = 4$ | TP 2 조각 × 복제본 2개 |
+| Expert | $2 \times 2 \times 1 = 4$ | TP 2 조각 × expert 2개 × 복제본 1개 |
+
+Attention 레이어는 위쪽 GPU 2개와 아래쪽 GPU 2개가 같은 가중치의 복사본입니다. Expert 레이어는 GPU마다 다른 expert가 올라가므로 복제본이 1개입니다. 논문은 $G_{\text{expert}}$를 expert 수와 같게 두므로 $G_{\text{data}}^{\text{exp}} = G_{\text{data}}^{\text{nonexp}} / E$가 됩니다.
+
+**책이 data parallelism과 model parallelism을 섞어 쓰지만, 추론에서는 둘 다 모델 복제본 수를 뜻합니다.** Data parallelism은 학습에서 나온 용어입니다. 데이터를 병렬로 처리하려면 모델을 여러 개 두어야 하므로, 추론으로 넘어오면서 모델 복제와 같은 뜻이 되었습니다. 발표자는 식의 $G_{\text{data}}$를 "모델 복제본이 몇 개인가"로 읽으라고 했습니다.
+
+출처: [Singh et al., A Hybrid Tensor-Expert-Data Parallelism Approach to Optimize Mixture-of-Experts Training (ICS 2023)](https://arxiv.org/abs/2303.06318), [책 그림 15-7](https://github.com/cfregly/ai-performance-engineering/blob/main/img/aisp_1507.png)
+
+### GPU 64개 예시는 파이프라인 4단으로 나눈 뒤 같은 식을 적용한다
+
+**책의 예시는 GPU 64개에 60 레이어, expert 64개인 MoE 모델을 올립니다.** 발표자는 레이어 수가 DeepSeek V2·V3와 비슷한 규모라고 했습니다. 실제 모델은 expert가 더 많습니다.
+
+| 단계 | 구성 | GPU 수 |
+| --- | --- | --- |
+| PP 4단 | 단마다 15 레이어, GPU 16개 | $64 / 4 = 16$ |
+| Attention 레이어 | TP 2-way × 복제본 8개 | $2 \times 8 = 16$ |
+| MoE 레이어 | GPU 16개에 expert를 4개씩 배치 | $1 \times 16 \times 1 = 16$ |
+| DP | 전체 구성을 한 벌 더 복제 | $64 \times 2 = 128$ |
+
+책은 MoE 레이어에서 "GPU를 4개씩 그룹화한다"고 씁니다. 발표자는 이 표현이 애매하다고 했습니다. 한 단의 GPU 16개에 expert 64개가 모두 들어가야 하므로, GPU 하나에 expert 4개를 묶는 것으로 읽어야 계산이 맞는다는 해석입니다. 이 경우 MoE 레이어에는 TP를 쓸 수 없습니다.
+
+### 책은 TP → PP → EP → DP 순서로 적용한다
+
+**책의 순서는 레이턴시를 먼저 줄이려는 선택입니다.** NVLink 도메인 안에 TP를 먼저 두면 도메인 밖 네트워크를 타는 지연이 줄어듭니다. 그다음 PP와 EP를 깔고, 마지막에 DP로 복제본을 늘립니다. 발표자는 저자가 NVL72급 랙을 전제로 설명한 것 같다고 했습니다.
+
+**발표자는 GPU가 적은 환경에서는 반대 순서로 생각한다고 했습니다.** GPU 몇 장으로 서빙하면 메모리가 늘 가장 큰 문제입니다. 그래서 메모리에 맞는 모델을 먼저 고르고, 복제본을 정한 뒤에 TP로 쪼갤지를 봅니다. 발표자는 이 규모의 구성을 직접 해 본 적은 없다고 밝혔습니다. 책의 순서는 GPU가 충분해서 레이턴시가 더 중요한 조직에 맞습니다.
+
+## Speculative Decoding
+
+### 작은 모델이 여러 토큰을 만들고 큰 모델이 한 번에 검증한다
+
+**Speculative decoding은 draft 모델이 만든 토큰 여러 개를 타겟 모델이 병렬 패스 한 번으로 검증하는 기법입니다.** Decode는 메모리 바운드입니다. 타겟 모델이 한 번에 여러 토큰을 처리하면 같은 가중치 읽기로 더 많은 연산을 하므로, 작업이 컴퓨트 바운드 쪽으로 옮겨 갑니다.
+
+- 두 모델은 같은 vocabulary와 tokenizer를 씁니다.
+- 한 라운드에서 최소 1개의 토큰은 타겟 모델이 확정합니다.
+- 결과는 타겟 모델의 확률 분포를 그대로 유지합니다.
+
+MTP, EAGLE 등 종류가 많지만 모두 이 성질 위에 서 있습니다. 발표자는 이 기법을 실무에 적용해 본 경험이 없고, 공부 차원에서 논문을 정리했다고 밝혔습니다.
+
+### 수용 확률과 잔류 분포가 타겟 분포를 보존한다
+
+**타겟 분포가 유지되는 이유는 다음 항등식입니다.** $p$는 타겟 모델, $q$는 draft 모델의 분포입니다.
+
+$$
+p(x) = \min\bigl(p(x), q(x)\bigr) + \max\bigl(0, p(x) - q(x)\bigr)
+$$
+
+첫 항은 draft 토큰을 수용해서 얻는 확률이고, 둘째 항은 거절했을 때 채워야 하는 확률입니다. 이를 수용 확률과 잔류 분포(residual distribution)로 풀어 씁니다.
+
+$$
+P(\text{accept} \mid \text{draft} = x) = \min\left(1, \frac{p(x)}{q(x)}\right), \qquad
+p_{\text{res}}(x) = \frac{\max\bigl(0, p(x) - q(x)\bigr)}{\sum_y \max\bigl(0, p(y) - q(y)\bigr)}
+$$
+
+수용 확률은 판별식으로 씁니다. Draft가 고른 토큰의 확률이 타겟에서 더 높으면 무조건 수용합니다. 더 낮으면 그 비율만큼의 확률로 수용합니다. 거절하면 버리지 않고 잔류 분포에서 토큰을 다시 뽑습니다. 그래서 첫 draft 토큰이 틀려도 토큰 하나는 반드시 확정됩니다.
+
+| Draft 토큰 | $q(x)$ | $p(x)$ | 수용 확률 |
+| --- | --- | --- | --- |
+| time | 0.4 | 0.8 | $\min(1, 0.8/0.4) = 1$ |
+| there | 0.8 | 0.4 | $\min(1, 0.4/0.8) = 0.5$ |
+
+`there`는 균등 분포에서 뽑은 난수로 50% 확률로 수용합니다. 거절되면 전체 분포를 봅니다. 후보가 A(`there`), B, C 세 개라고 하면 다음과 같습니다.
+
+| 토큰 | $p(x)$ | $q(x)$ | 수용으로 확보 | 부족분 | 잔류 분포 |
+| --- | --- | --- | --- | --- | --- |
+| A | 0.4 | 0.8 | $0.8 \times 0.5 = 0.4$ | 0 | 0 |
+| B | 0.4 | 0.1 | $0.1 \times 1 = 0.1$ | 0.3 | $0.3 / 0.4 = 0.75$ |
+| C | 0.2 | 0.1 | $0.1 \times 1 = 0.1$ | 0.1 | $0.1 / 0.4 = 0.25$ |
+| 합계 | 1.0 | 1.0 | 0.6 | 0.4 | 1.0 |
+
+거절 확률은 0.4입니다. 거절되면 B를 75%, C를 25% 확률로 뽑습니다. 과대평가된 A는 다시 뽑지 않습니다. 수용으로 얻은 확률과 거절 뒤 보충한 확률을 더하면 A 0.4, B 0.4, C 0.2로 타겟 분포와 같습니다.
+
+책 그림 15-8은 이 과정을 "Once upon a time" 예시로 보여 줍니다. 발표자는 그림 Step 2의 첫 단어 "upon"이 "Once"의 오기라고 짚었습니다.
+
+출처: [Leviathan et al., Fast Inference from Transformers via Speculative Decoding (Google Research)](https://arxiv.org/abs/2211.17192), [Chen et al., Accelerating Large Language Model Decoding with Speculative Sampling (DeepMind)](https://arxiv.org/abs/2302.01318), [책 그림 15-8](https://github.com/cfregly/ai-performance-engineering/blob/main/img/aisp_1508.png)
+
+## EAGLE
+
+### EAGLE은 토큰 대신 feature를 예측하는 1-레이어 draft 모델이다
+
+**EAGLE은 타겟 모델의 last hidden state(논문의 feature)를 입력으로 받는 디코더 레이어 하나를 draft 모델로 씁니다.** 배경은 두 가지입니다. 알맞은 draft 모델을 찾기 어렵고, 기존 draft 모델은 수락률이 낮았습니다.
+
+Feature는 토큰보다 규칙적이고 표현력이 풍부합니다. 하지만 feature만 넣으면 어떤 토큰이 샘플링됐는지가 반영되지 않아 엉뚱한 토큰이 나옵니다. 그래서 feature에 샘플링된 토큰의 embedding을 함께 넣습니다.
+
+| 구성 요소 | 출처 | 학습 여부 |
+| --- | --- | --- |
+| Embedding 레이어 | 타겟 모델 것을 재사용 | 동결 |
+| Autoregression Head | 트랜스포머 디코더 레이어 1개 + FC | 학습 |
+| LM Head | 타겟 모델 것을 재사용 | 동결 |
+
+학습 loss는 feature 회귀와 토큰 분류를 더합니다. 0.1은 저자들이 정한 휴리스틱 값입니다.
+
+$$
+L = L_{\text{reg}} + 0.1 \times L_{\text{cls}}, \quad
+L_{\text{reg}} = \text{SmoothL1}(f_{t+1}, \hat{f}_{t+1}), \quad
+L_{\text{cls}} = \text{CrossEntropy}(p_{t+2}, \hat{p}_{t+2})
+$$
+
+**Draft는 한 줄이 아니라 트리로 뽑습니다.** 예측한 feature를 LM Head에 통과시켜 후보 토큰을 2개씩 샘플링하고, 각 후보로 다시 다음 feature를 예측합니다. 논문 예시에서는 draft 모델을 3번 실행해 후보 10개짜리 트리를 만듭니다. 타겟 모델이 트리 전체를 검증하고, 가장 멀리까지 수락된 경로를 채택합니다.
+
+> 정정: 발표에서는 "EAGLE 기준 draft 모델은 타겟의 1~3%, 레이턴시는 3~5배 향상"이라고 했지만, 논문의 수치와 다릅니다. EAGLE 논문은 LLaMA2-Chat 70B에서 2.7~3.5배라고 씁니다. 학습 파라미터는 7B 타겟에 0.24B, 70B 타겟에 0.99B이고, 비율로 계산하면 약 1.4~3.4%입니다. EAGLE-3 논문은 최대 6.5배라고 씁니다.
+
+출처: [Li et al., EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty](https://arxiv.org/abs/2401.15077)
+
+### EAGLE-2는 draft 모델의 확률로 트리 모양을 동적으로 정한다
+
+**EAGLE-2는 문맥에 따라 트리를 넓히거나 좁힙니다.** EAGLE-1의 트리는 모양이 고정이었습니다. "10+2" 다음에는 "="도 "+"도 합리적이므로 후보가 여러 개 필요합니다. "10+2=" 다음은 "1"이 거의 확실하므로 "3" 같은 후보는 낭비입니다.
+
+전제는 draft 모델의 confidence score, 즉 예측 확률이 타겟의 실제 수락률과 강한 선형 관계를 보인다는 관찰입니다. 그래서 확률이 높은 가지만 키웁니다.
+
+| 단계 | 동작 | 논문 그림의 예시 |
+| --- | --- | --- |
+| Expand | 현재 층에서 누적 확률이 높은 top-k 노드만 확장 | $k = 2$ |
+| Rerank | 전체 노드 중 누적 확률이 높은 top-m개를 선택 | $m = 8$ |
+| Flatten | 선택한 노드를 1차원으로 나열해 타겟에 입력 | It, is, has, a, the, to, good, be |
+| Tree attention mask | 각 노드가 자기 조상만 보도록 마스킹 | 패스 1번으로 트리 전체 검증 |
+
+누적 확률은 루트에서 그 노드까지 확률을 곱한 값입니다. EAGLE-2는 트리 구성만 바꾸므로 draft 모델을 다시 학습하지 않습니다.
+
+발표자는 EAGLE이 vLLM에 처음 들어갔을 때 속도가 나지 않는다는 이슈가 많았던 것으로 기억한다고 했습니다. 지금은 나아진 것 같다고 했습니다.
+
+출처: [Li et al., EAGLE-2: Faster Inference of Language Models with Dynamic Draft Trees](https://arxiv.org/abs/2406.16858)
+
+### EAGLE-3는 feature loss를 버리고 학습과 추론의 입력을 맞춘다
+
+**EAGLE-3는 학습 때와 추론 때 draft 모델의 입력 분포가 다른 문제를 풉니다.** EAGLE-1은 학습할 때 타겟 모델의 정답 feature를 입력으로 받습니다. 추론할 때는 draft 모델이 직접 예측한 feature를 다음 입력으로 씁니다. 이 차이 때문에 draft가 깊어질수록 오차가 쌓입니다.
+
+| 변경 | 내용 |
+| --- | --- |
+| Direct token prediction | Feature 예측 loss를 없애고 토큰 예측 loss만 최적화 |
+| Training-time test | 학습할 때도 draft 모델의 이전 출력을 다음 입력으로 재사용 |
+| Multi-layer feature fusion | 최상위 레이어만 쓰지 않고 저·중·고층 feature를 이어 붙여 입력 |
+
+**큰 배치에서도 이득이 남는다는 점을 SGLang에서 보였습니다.** 배치가 크면 GPU 연산 여유가 줄어듭니다. 이때 draft 생성과 검증이 연산 부담을 더하고, 거절된 draft는 연산을 버립니다. 그래서 타겟 모델만 쓸 때보다 처리량이 떨어질 수 있습니다. EAGLE-3는 배치 64에서 non-SD 대비 1.38배의 처리량을 보고했습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 서빙 프레임워크 | SGLang v0.4.4 |
+| 하드웨어 | H100 1장 |
+| 타겟 모델 | LLaMA-Instruct 3.1 8B |
+| 데이터셋 | MT-Bench |
+| Draft 구성 | 트리 없이 chain, 길이 3 |
+
+출처: [Li et al., EAGLE-3: Scaling up Inference Acceleration of Large Language Models via Training-Time Test](https://arxiv.org/abs/2503.01840)
+
+### EAGLE-4는 하드웨어와 부하를 재서 트리 크기를 정한다
+
+**EAGLE-4는 2026년 10월에 나왔고, draft를 더 뽑을 가치가 있는지를 측정한 비용으로 판단합니다.** 트리를 넓히거나 깊게 하면 수락되는 토큰은 늘지만 draft와 검증 비용도 커집니다. 이 균형은 모델, 하드웨어, 배치 크기에 따라 달라집니다.
+
+Speculative decoding을 쓰지 않게 되는 가장 흔한 이유는 배치가 커지면 오히려 느려진다는 것입니다. Draft 토큰이 늘면 연산량이 늘어나는데, 큰 배치는 이미 컴퓨트 바운드이기 때문입니다. EAGLE-4는 이 문제를 겨냥합니다.
+
+**EAGLE-Harness는 profiling으로 lookup table을 만들고, 추론 중에는 table 조회만으로 결정합니다.**
+
+1. Warm-up 단계에서 배치 크기와 컨텍스트 길이별로 draft 1단계 시간 $c_{\text{draft}}$와 토큰 $n$개 검증 시간 $c_{\text{ver}}(n)$을 측정해 저장합니다.
+2. 추론 중에는 현재 배치 크기와 컨텍스트 길이에 맞는 비용을 table에서 읽습니다.
+3. 모든 결정을 비교식 하나로 내립니다.
+
+$$
+\frac{\Delta A}{\Delta C} \geq \tau
+$$
+
+$\Delta A$는 수락될 토큰 수 기댓값의 증가분이고, $\Delta C$는 측정해 둔 추가 draft·검증 시간입니다. 발표자는 $\Delta A$를 구하는 방법을 트리의 확률값으로 예측하는 것 같다고 추측했습니다. 논문도 그렇게 설명합니다. EAGLE-2처럼 가지를 따라 곱한 draft 확률을 그 가지가 수락될 확률로 씁니다.
+
+| 결정 | 기준 |
+| --- | --- |
+| Draft 깊이 | 한 단계 더 내려갈 가치가 있는지. Threshold는 깊이에 따라 올라감 |
+| 검증 토큰 수 | 점수가 높은 노드부터 하나씩 추가하며 검증 비용과 비교 |
+| 트리 폭 | 부하가 낮으면 노드당 가지 8개까지, 높으면 4개까지 |
+
+같은 drafter가 요청 하나일 때는 깊고 넓은 트리를, 부하가 높을 때는 짧은 chain을 만듭니다.
+
+**Efficient LM Head는 low-rank head로 후보를 고르고 원래 head로 정확한 logit을 계산합니다.** 논문이 측정한 구성에서 LM Head는 draft forward 574 µs 중 65.4%를 차지합니다.
+
+$$
+\tilde{z} = A(Bh), \quad C = \text{TopK}(\tilde{z}, K), \quad z_C = W_C h
+$$
+
+Rank $r$ 근사로 vocabulary 전체를 훑어 후보 $K$개를 고르고, 원래 head $W$에서 그 행만 꺼내 계산합니다. 연산량은 $O(Vd)$에서 $O(dr + Vr + Kd)$로 줄어듭니다. Rank 128에서 draft forward는 574 µs에서 255 µs로 55.6% 줄었습니다.
+
+> 정정: 발표에서는 "EAGLE-4는 모델 학습은 그대로 두고 추론 알고리즘만 바꿨다"고 했지만, drafter도 바뀌었습니다. Low-rank head의 두 행렬은 후보 검색용으로 따로 학습합니다. SVD로 초기화만 하면 rank 128에서 수락 길이가 검증당 0.48 토큰 줄기 때문입니다. 논문은 sliding-window attention 같은 가벼운 attention도 drafter에 넣습니다. 추론 중에 가중치를 바꾸지 않는 것은 EAGLE-Harness입니다.
+
+출처: [EAGLE-4: One Flexible Drafter for All Batch Sizes and Hardware (preprint)](https://github.com/eagle-hq/EAGLE-4/blob/main/EAGLE4_Paper.pdf)
+
+### Q1. MTP·DFlash는 책의 방식과 무엇이 다른가
+
+> Speculative Decoding에서 요즘은 MTP나 DFlash 같은 걸 더 많이 사용하는데 책에서 소개하는 것과 어떤 차이와 장단점이 있을지 궁금합니다. 저희 같은 경우엔 MTP는 무조건 사용하는 편입니다.
+
+**발표자는 실무 경험이 없어 답을 내리지 못했고, 찾을 수 있었던 비교 데이터를 소개했습니다.** 책이 다루는 방식 중에서는 EAGLE을 중심으로 봤습니다. MTP는 모델 벤더가 함께 내놓지만, Medusa head를 내놓은 곳은 보지 못했다고 했습니다.
+
+세 방식은 draft를 만드는 방법이 다릅니다. 다음 표는 EAGLE-4 논문의 Qwen 3.8 27B용 drafter 비교입니다.
+
+| 방식 | Draft 방법 | 레이어 수 | 파라미터 |
+| --- | --- | --- | --- |
+| MTP (모델 내장) | Autoregressive, 고정 chain | 1 | 0.37B |
+| EAGLE-4 | Autoregressive, 동적 트리 | 1 | 0.44B |
+| DFlash 2 | Block diffusion으로 블록을 한 번에 생성 | 5 | 1.66B |
+| DSpark | 병렬 블록에 순차 의존성을 더한 hybrid | 5 | 1.65B |
+
+EAGLE-4 논문은 MTP가 DeepSeek-V3 이후 EAGLE과 같은 구조를 따른다고 설명합니다. 타겟의 hidden state와 토큰 embedding을 이어 붙여 가벼운 draft 레이어에 넣는 구조입니다. DFlash와 DSpark는 블록 크기가 고정이라서 draft 길이를 부하에 맞춰 줄이기 어렵습니다.
+
+EAGLE-4 논문의 Table 2 중 temperature 0의 결과입니다. 환경은 Qwen 3.8 27B, B300 4장, TP 4, SPEED-Bench입니다.
+
+| 방식 | Concurrency 1 (tokens/s) | Concurrency 512 (tokens/s) |
+| --- | --- | --- |
+| EAGLE-4 | 863.8 (3.59×) | 28,340 (1.34×) |
+| DFlash 2 | 672.6 (2.80×) | 16,641 (0.78×) |
+| DSpark | 618.6 (2.57×) | 14,229 (0.67×) |
+| MTP | 534.5 (2.22×) | 21,518 (1.01×) |
+| Vanilla | 240.5 (1.00×) | 21,203 (1.00×) |
+
+**이 수치는 EAGLE 팀이 직접 낸 것이므로 참고용으로 봐야 합니다.** 발표자는 EAGLE-4가 DFlash 2, DSpark, MTP와 경쟁하려고 낸 논문 같다고 했고, 자기 방식이 좋게 나오는 것은 당연하다고 했습니다. Nemotron-3.5 표에는 DFlash 2와 DSpark가 없습니다. 논문은 이유를 밝히지 않습니다. 발표자는 Hugging Face에 해당 체크포인트가 없기 때문이라고 추측했습니다.
+
+독립적인 비교 자료로는 두 가지를 찾았다고 했습니다. 하나는 vLLM에서 여러 방식을 배치 크기별로 측정한 MLSys 2026 논문입니다. 다른 하나는 개인이 공개한 Qwen 벤치마크 저장소인데, 발표자는 크게 참고할 정도는 아니라고 했습니다.
+
+> 정정: 발표에서는 "DSpark는 DFlash 2 기반으로 새로 나왔다"고 했지만, DSpark는 DeepSeek이 2026년 6월에 낸 DFlash의 확장입니다. EAGLE-4 논문이 비교에 쓴 DSpark 체크포인트가 RedHatAI의 것입니다.
+
+출처: [Chen et al., DFlash: Block Diffusion for Flash Speculative Decoding](https://arxiv.org/abs/2602.06036), [Cheng et al., DSpark: Confidence-Scheduled Speculative Decoding with Semi-Autoregressive Generation](https://arxiv.org/abs/2607.05147), [Liu et al., Speculative Decoding: Performance or Illusion? (MLSys 2026)](https://arxiv.org/abs/2601.11580), [shreyansh26/qwen-spec-decode-benchmarking](https://github.com/shreyansh26/qwen-spec-decode-benchmarking)
+
+### Q2. MoE 모델에도 EAGLE을 쓸 수 있나
+
+> 전체적으로 거대한 LLM과 여러 대의 GPU를 이용한 최적화 관련된 내용인 것 같습니다. EAGLE 기술은 결국에는 LLM이 Memory-bound라는 특징을 이용하여 여러 개의 토큰은 미리 예측하고 맞는 토큰을 선택하는 것 같습니다. 그러면 만약 MoE 같은 구조에서는 어떤 Expert가 선택될지 모르는 상황일 것 같은데 사용이 가능할까요?
+
+**사용할 수 있습니다. EAGLE은 타겟 모델의 last hidden state와 토큰 embedding만 쓰므로, 타겟 내부에서 어떤 expert가 선택되는지와 무관합니다.** Draft 모델은 attention과 FFN으로 된 일반 트랜스포머 레이어 하나입니다. 검증은 타겟 모델의 정상적인 forward이므로 router가 평소대로 expert를 고릅니다.
+
+> 정정: 발표에서는 "EAGLE 논문 appendix에서 MoE 레이어로도 테스트했는데 결과가 안 좋아서 안 쓴 것 같다"고 했지만, 논문의 내용은 다릅니다. EAGLE 논문은 MoE 모델인 Mixtral 8x7B를 타겟으로 실험했고 1.5배의 가속을 보고했습니다. 논문은 평균 수락 길이가 짧아서 LLaMA보다 가속이 작다고 설명합니다. Drafter 안에 MoE 레이어를 넣는 비교는 EAGLE-4 논문에 있습니다. MoE는 일반화가 좋아지지만 메모리와 학습 비용이 늘어서, drafter의 FFN 구조를 타겟 모델과 맞춘다고 씁니다.
+
+EAGLE-4 논문의 타겟 중 하나인 Nemotron-3.5-Super-VL-120B-A12B도 MoE 모델입니다.
+
+## MoE Rerouting
+
+### 책은 expert 과부하를 세 가지 방법으로 피한다
+
+**분산 환경에서는 특정 expert와 그 expert가 올라간 GPU로 토큰이 몰리는 현상을 피해야 합니다.** 책이 제시하는 방법은 다음과 같습니다.
+
+| 방법 | 동작 |
+| --- | --- |
+| Capacity factor | Expert의 처리 용량을 넘는 토큰을 라우팅 점수 2순위 expert로 보내거나 2차 패스로 처리 |
+| Expert 복제 | 요청이 몰리는 expert를 여러 GPU에 복제 |
+| Adaptive routing | 실시간 부하를 보고, 점수가 낮더라도 부하가 낮은 expert로 우회 |
+
+### Q3. 재라우팅했을 때 응답 품질 변화는 어떻게 측정하나
+
+> MoE 추론에서 특정 주제의 요청이 몰려 한 전문가의 처리 용량을 넘으면, 초과 토큰을 라우팅 점수가 다음으로 높은 전문가에게 보낼 수 있다고 이해했습니다. 라우팅 점수 차이만으로 최종 답변의 품질이 얼마나 달라질지 알 수는 없을 것 같은데, 실제 서비스에서는 이렇게 재라우팅했을 때 해당 주제의 응답 품질이 얼마나 달라지는지 어떻게 측정하는지 궁금합니다.
+
+**측정은 일반적인 품질 평가 방법을 그대로 씁니다. 재라우팅 전용 방법은 없습니다.** Perplexity, 표준 벤치마크, A/B 테스트, LLM-as-a-judge가 여기에 해당합니다.
+
+**재라우팅이 품질을 얼마나 떨어뜨리는지에는 정설이 없다는 것이 발표자의 판단입니다.** MoE 라우팅을 바꿔 보는 연구는 많습니다. 발표자는 다음과 같은 논문들을 봤다고 했습니다.
+
+- 수학을 잘하는 expert를 막고 다른 expert로 보내 본 연구
+- Top-8 대신 expert를 7개, 6개로 줄여 본 연구. 6개까지는 괜찮고 5개에서 크게 떨어졌다는 결과
+- 2순위, 3순위 expert로 보내 본 연구. 떨어졌다는 결과도, 오히려 올랐다는 결과도 있음
+
+큰 조직에서 나온 논문이나 합의된 결론은 듣지 못했다고 했습니다.
+
+**발표자의 제안은 모델 카드의 top-k를 기준으로 삼고, 로드 밸런싱이 꼭 필요할 때만 QoS를 보고 선택적으로 재라우팅하는 것입니다.** 모델은 그 top-k로 학습되었으므로 보통은 그대로 쓰는 편이 가장 좋습니다.
+
+선택적으로 적용하려면 주제별로 테스트합니다. 예를 들어 수학 문제만으로 평가하면, 2순위 expert만 거쳐도 점수가 유지되는지 쉽게 확인할 수 있습니다. 유지된다면 앞단의 작은 모델이 요청을 수학 문제로 분류했을 때만 점수가 낮은 expert로 보내도록 분리합니다. 발표자는 이것이 본인의 생각이고 정확한 결론은 모른다고 밝혔습니다.
